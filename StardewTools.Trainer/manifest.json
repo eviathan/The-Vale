@@ -1,0 +1,10 @@
+{
+  "Name": "StardewTools Trainer",
+  "Author": "lostrecordsuk",
+  "Version": "0.1.0",
+  "Description": "In-game cheat/trainer menu: infinite stamina/health, speed boost, money and item spawning, time control.",
+  "UniqueID": "lostrecordsuk.StardewToolsTrainer",
+  "EntryDll": "StardewTools.Trainer.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

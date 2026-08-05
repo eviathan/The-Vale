@@ -1,0 +1,280 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:StardewTools.SaveEditor.ViewModels"
+        xmlns:controls="using:StardewTools.SaveEditor.Controls"
+        xmlns:conv="using:Avalonia.Data.Converters"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="820" d:DesignHeight="700"
+        x:Class="StardewTools.SaveEditor.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="StardewTools"
+        Width="820" Height="720">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Window.Styles>
+        <Style Selector="StackPanel.field">
+            <Setter Property="Orientation" Value="Horizontal"/>
+            <Setter Property="Spacing" Value="8"/>
+        </Style>
+        <Style Selector="StackPanel.field &gt; TextBlock">
+            <Setter Property="Width" Value="120"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="StackPanel.field &gt; NumericUpDown">
+            <Setter Property="Width" Value="180"/>
+            <Setter Property="FormatString" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <TabControl>
+        <TabItem Header="Save File">
+            <DockPanel Margin="16" DataContext="{Binding SaveEditor}" x:DataType="vm:SaveEditorViewModel">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+                    <Button Content="Open Save..." Click="OnOpenClicked"/>
+                    <Button Content="Save" Click="OnSaveClicked" IsEnabled="{Binding IsSaveLoaded}"/>
+                </StackPanel>
+
+                <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusMessage}" Margin="0,12,0,0" Opacity="0.7"/>
+
+                <TabControl IsEnabled="{Binding IsSaveLoaded}">
+
+                    <TabItem Header="Player">
+                        <ScrollViewer DataContext="{Binding Player}" x:DataType="vm:PlayerTabViewModel">
+                            <StackPanel Spacing="10" Margin="0,10,0,0">
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Name"/>
+                                    <TextBox Text="{Binding PlayerName}" Width="180"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Money"/>
+                                    <NumericUpDown Value="{Binding Money}" Minimum="0" Maximum="999999999"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Health"/>
+                                    <NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="9999"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Max Health"/>
+                                    <NumericUpDown Value="{Binding MaxHealth}" Minimum="0" Maximum="9999"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Stamina"/>
+                                    <NumericUpDown Value="{Binding Stamina}" Minimum="0" Maximum="9999"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Season"/>
+                                    <TextBox Text="{Binding Season}" Width="180"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Day"/>
+                                    <NumericUpDown Value="{Binding DayOfMonth}" Minimum="1" Maximum="28"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Year"/>
+                                    <NumericUpDown Value="{Binding Year}" Minimum="1" Maximum="9999"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="Inventory">
+                        <DockPanel Margin="0,10,0,0" DataContext="{Binding Inventory}" x:DataType="vm:InventoryTabViewModel">
+                            <StackPanel DockPanel.Dock="Bottom" Classes="field" Margin="0,10,0,0">
+                                <TextBlock Text="Duplicate selected, stack:"/>
+                                <NumericUpDown Value="{Binding DuplicateStack}" Minimum="1" Maximum="999" Width="100" FormatString="0"/>
+                                <Button Content="Duplicate" Command="{Binding DuplicateSelectedCommand}"/>
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Top" Opacity="0.7" TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Text="Duplicating copies a real item already in your inventory - safe, since it's never a fabricated item type. Empty slots are reused automatically."/>
+                            <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ItemRowViewModel">
+                                        <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding ItemType}" Width="90"/>
+                                                <TextBlock Text="{Binding Name}" Width="140"/>
+                                                <TextBlock Text="Stack" VerticalAlignment="Center"/>
+                                                <NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="120" FormatString="0"/>
+                                                <TextBlock Text="Quality" VerticalAlignment="Center"/>
+                                                <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="120" IsEnabled="{Binding HasQuality}"/>
+                                                <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
+
+                    <TabItem Header="Stats">
+                        <ScrollViewer DataContext="{Binding Stats}" x:DataType="vm:StatsTabViewModel">
+                            <StackPanel Spacing="10" Margin="0,10,0,0">
+                                <StackPanel Classes="field"><TextBlock Text="Days Played"/><NumericUpDown Value="{Binding DaysPlayed}" Minimum="0" Maximum="99999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Steps Taken"/><NumericUpDown Value="{Binding StepsTaken}" Minimum="0" Maximum="999999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Monsters Killed"/><NumericUpDown Value="{Binding MonstersKilled}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Items Shipped"/><NumericUpDown Value="{Binding ItemsShipped}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Items Crafted"/><NumericUpDown Value="{Binding ItemsCrafted}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Items Cooked"/><NumericUpDown Value="{Binding ItemsCooked}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Quests Completed"/><NumericUpDown Value="{Binding QuestsCompleted}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Times Fished"/><NumericUpDown Value="{Binding TimesFished}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Truffles Found"/><NumericUpDown Value="{Binding TrufflesFound}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Diamonds Found"/><NumericUpDown Value="{Binding DiamondsFound}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Gold Found"/><NumericUpDown Value="{Binding GoldFound}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Iridium Found"/><NumericUpDown Value="{Binding IridiumFound}" Minimum="0" Maximum="999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Total Money Gifted"/><NumericUpDown Value="{Binding TotalMoneyGifted}" Minimum="0" Maximum="999999999"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Lifetime Earnings"/><NumericUpDown Value="{Binding IndividualMoneyEarned}" Minimum="0" Maximum="999999999"/></StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="Achievements">
+                        <StackPanel Spacing="10" Margin="0,10,0,0" DataContext="{Binding Achievements}" x:DataType="vm:AchievementsTabViewModel">
+                            <StackPanel Classes="field">
+                                <TextBlock Text="Achievement"/>
+                                <ComboBox ItemsSource="{Binding AvailableAchievements}" SelectedItem="{Binding SelectedNewAchievement}" Width="320"/>
+                                <Button Content="Add" Command="{Binding AddCommand}"/>
+                            </StackPanel>
+                            <TextBlock Text="Unlocked" FontWeight="Bold"/>
+                            <ListBox ItemsSource="{Binding Unlocked}" SelectedItem="{Binding SelectedUnlocked}" Height="220"/>
+                            <Button Content="Remove Selected" Command="{Binding RemoveSelectedCommand}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </TabItem>
+
+                    <TabItem Header="Relationships">
+                        <Grid ColumnDefinitions="200,*" Margin="0,10,0,0" DataContext="{Binding Relationships}" x:DataType="vm:RelationshipsTabViewModel">
+                            <ListBox Grid.Column="0" ItemsSource="{Binding NpcNames}" SelectedItem="{Binding SelectedNpcName}"/>
+                            <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="10" IsEnabled="{Binding HasSelection}">
+                                <TextBlock Text="{Binding SelectedNpcName}" FontWeight="Bold"/>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Points"/>
+                                    <NumericUpDown Value="{Binding Points}" Minimum="0" Maximum="3000"/>
+                                </StackPanel>
+                                <CheckBox Content="Talked to today" IsChecked="{Binding TalkedToToday}"/>
+                                <TextBlock Text="Only NPCs you've already met show up here - creating a brand new relationship from nothing isn't supported (see README)."
+                                           TextWrapping="Wrap" Opacity="0.7" Width="300"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="Storage">
+                        <Grid ColumnDefinitions="220,*" Margin="0,10,0,0" DataContext="{Binding Storage}" x:DataType="vm:StorageTabViewModel">
+                            <ListBox Grid.Column="0" ItemsSource="{Binding Chests}" SelectedItem="{Binding SelectedChest}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ChestRowViewModel">
+                                        <TextBlock Text="{Binding Label}"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <ItemsControl Grid.Column="1" Margin="16,0,0,0" ItemsSource="{Binding SelectedChestItems}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ItemRowViewModel">
+                                        <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding ItemType}" Width="90"/>
+                                                <TextBlock Text="{Binding Name}" Width="120"/>
+                                                <TextBlock Text="Stack" VerticalAlignment="Center"/>
+                                                <NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="110" FormatString="0"/>
+                                                <TextBlock Text="Quality" VerticalAlignment="Center"/>
+                                                <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsEnabled="{Binding HasQuality}"/>
+                                                <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="Farm">
+                        <StackPanel Spacing="10" Margin="0,10,0,0" DataContext="{Binding Farm}" x:DataType="vm:FarmTabViewModel">
+                            <StackPanel Classes="field">
+                                <TextBlock Text="Farm Type"/>
+                                <ComboBox ItemsSource="{Binding FarmTypes}" SelectedItem="{Binding SelectedFarmType}" Width="180"/>
+                            </StackPanel>
+                            <StackPanel Classes="field">
+                                <TextBlock Text="Weather Tomorrow"/>
+                                <ComboBox ItemsSource="{Binding WeatherTypes}" SelectedItem="{Binding SelectedWeather}" Width="180"/>
+                            </StackPanel>
+                            <TextBlock Text="Weather names are best-effort, not verified against real save data (see README)."
+                                       Opacity="0.7" TextWrapping="Wrap" Width="400"/>
+                            <StackPanel Classes="field">
+                                <TextBlock Text="Daily Luck"/>
+                                <NumericUpDown Value="{Binding DailyLuck}" Minimum="-1" Maximum="1" Increment="0.01" FormatString="0.00"/>
+                            </StackPanel>
+                            <TextBlock Text="Buildings" FontWeight="Bold" Margin="0,12,0,0"/>
+                            <ItemsControl ItemsSource="{Binding BuildingTypes}"/>
+                        </StackPanel>
+                    </TabItem>
+
+                    <TabItem Header="Map">
+                        <Grid ColumnDefinitions="*,220" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
+                            <DockPanel Grid.Column="0">
+                                <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+                                <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
+                                           Text="Abstract layout, not the game's real terrain art - colored by entity type, positioned at real tile coordinates. Click a dot to select it."/>
+                                <controls:FarmMapControl Entities="{Binding Entities}" Selected="{Binding Selected}" Season="{Binding Season}"
+                                                          MinHeight="400"/>
+                            </DockPanel>
+
+                            <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="10">
+                                <TextBlock Text="Selected" FontWeight="Bold"/>
+                                <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}"/>
+                                <Button Content="Remove" Command="{Binding RemoveSelectedCommand}" IsEnabled="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                </TabControl>
+            </DockPanel>
+        </TabItem>
+
+        <TabItem Header="Trainer">
+            <DockPanel Margin="16" DataContext="{Binding Trainer}" x:DataType="vm:TrainerViewModel">
+                <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Margin="0,0,0,12" Opacity="0.7"/>
+
+                <StackPanel IsEnabled="{Binding IsConnected}" Spacing="10">
+                    <TextBlock Text="{Binding PlayerName, StringFormat='Playing as {0}'}" FontWeight="Bold"/>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Money" Width="90" VerticalAlignment="Center"/>
+                        <NumericUpDown Value="{Binding Money}" Minimum="0" Maximum="999999999" Width="160" FormatString="0"/>
+                        <Button Content="Set" Command="{Binding ApplyMoneyCommand}"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Health" Width="90" VerticalAlignment="Center"/>
+                        <NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="9999" Width="160" FormatString="0"/>
+                        <Button Content="Set" Command="{Binding ApplyHealthCommand}"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Max Health" Width="90" VerticalAlignment="Center"/>
+                        <NumericUpDown Value="{Binding MaxHealth}" Minimum="0" Maximum="9999" Width="160" FormatString="0"/>
+                        <Button Content="Set" Command="{Binding ApplyMaxHealthCommand}"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Stamina" Width="90" VerticalAlignment="Center"/>
+                        <NumericUpDown Value="{Binding Stamina}" Minimum="0" Maximum="9999" Width="160" FormatString="0"/>
+                        <Button Content="Set" Command="{Binding ApplyStaminaCommand}"/>
+                    </StackPanel>
+
+                    <CheckBox Content="Infinite stamina" IsChecked="{Binding InfiniteStamina}"/>
+                    <CheckBox Content="Infinite health" IsChecked="{Binding InfiniteHealth}"/>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Speed bonus" Width="90" VerticalAlignment="Center"/>
+                        <NumericUpDown Value="{Binding SpeedBonus}" Minimum="0" Maximum="10" Width="160" FormatString="0"/>
+                    </StackPanel>
+                </StackPanel>
+            </DockPanel>
+        </TabItem>
+    </TabControl>
+
+</Window>
