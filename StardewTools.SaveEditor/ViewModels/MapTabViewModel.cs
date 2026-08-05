@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
+using StardewTools.SaveEditor.MapAssets;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
@@ -13,8 +15,26 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty] private MapEntitySummary? _selected;
     [ObservableProperty] private string _season = "";
     [ObservableProperty] private string _summary = "";
+    [ObservableProperty] private string _contentFolder = "";
 
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
+
+    public MapTabViewModel()
+    {
+        // Prefer whatever the user explicitly set last time; if this is a fresh machine/settings
+        // file, fall back to searching common install locations before giving up and asking.
+        var saved = AppSettings.Load().MapContentFolder;
+        ContentFolder = !string.IsNullOrEmpty(saved) && Directory.Exists(saved)
+            ? saved
+            : GameInstallLocator.FindExtractedContentFolder() ?? "";
+    }
+
+    partial void OnContentFolderChanged(string value)
+    {
+        var settings = AppSettings.Load();
+        settings.MapContentFolder = value;
+        settings.Save();
+    }
 
     public void Bind(SaveGameEditor save)
     {

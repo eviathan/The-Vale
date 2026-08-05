@@ -4,6 +4,9 @@
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Explicit because /Applications/Stardew Valley.app (an older, unrelated GOG copy) sorts
+         first in auto-detection and isn't a valid 1.6+ install. -->
+    <GamePath>/Users/brian/Library/Application Support/Steam/steamapps/common/Stardew Valley/Contents/MacOS</GamePath>
   </PropertyGroup>
 
   <ItemGroup>

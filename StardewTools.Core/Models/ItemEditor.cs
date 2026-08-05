@@ -45,5 +45,8 @@ public sealed class ItemEditor
 
     public bool HasQuality => _element.Element("quality") is not null || _element.Element("Quality") is not null;
 
+    /// <summary>Sprite sheet index for this item's icon (confirmed real field, e.g. Weeds = 784). Null if absent.</summary>
+    public int? ParentSheetIndex => _element.TryGetChildInt("parentSheetIndex") ?? _element.TryGetChildInt("ParentSheetIndex");
+
     internal XElement Element => _element;
 }

@@ -82,20 +82,50 @@ Sub-tabs, each backed by its own `*Editor` class in Core:
   shown as named dropdowns rather than raw numbers, plus a read-only building list.
   Farm type and item quality names are confirmed; weather names are best-effort
   (the reference save only ever showed value `1` = Rain).
-- **Map** - a top-down, click-to-select view of everything the save tracks as placed
-  on the farm: trees, grass, resource clumps (stumps/boulders/logs), and world
-  objects (confirmed real against a 1,636-entity real farm - trees, grass and
-  resource clumps all verified, remove + round-trip tested). This is *not* the
-  game's real terrain art (grass/dirt/path graphics) - that comes from Stardew's own
-  xTile map files, a different and much more involved format to parse and render
-  (plus DXT-decoding the actual tilesheet textures) than anything else in this repo.
-  What's shown is an abstract grid: a colored dot per entity at its real tile
-  position, tinted by the save's current season. `FarmMapEditor.UnmodeledTerrainFeatures`
-  surfaces any terrain feature type we don't render (e.g. planted crops/tilled soil -
-  the reference save had none, so we don't have verified real data for that schema)
-  so the map view can say "there's also N tiles of X not shown" instead of silently
-  dropping them. Only the Farm location is covered; the save has dozens of others
-  (Town, Beach, Mine, ...) that aren't touched.
+- **Map** - a top-down, click-to-select view of the farm, with the game's *real* tile
+  art (terrain, paths, border trees) as the backdrop when an "extracted assets folder"
+  is set (see below). Placed entities render as **real sprites**, not markers, where
+  we've verified the sprite sheet layout:
+  - **Trees** (`TreeSprites`) - the actual adult tree sprite from `TerrainFeatures/
+    tree{1,2,3}_{season}.png`, confirmed by visually inspecting the real extracted
+    file (two ~48x80px adult variants side by side), anchored trunk-down on the tile.
+    Always draws the *adult* sprite regardless of actual growth stage - sapling/bush
+    stage frame coordinates aren't verified yet, so a grown tree in the right spot
+    beats a stage-accurate square. Only treeType 1/2/3 are mapped; exotic types
+    (palm, mystic, mushroom) still fall back to a marker.
+  - **Objects** (`ObjectSprites`) - real icons from `Maps/springobjects.png` (confirmed
+    384x624px = 24x39 grid of 16px cells) via each object's real `ParentSheetIndex`.
+  - **Grass** - not drawn at all once real art is loaded; it's already baked into the
+    terrain art, so a marker per tile was just noise.
+  - **Resource clumps** (stumps/boulders/logs) and anything without a mapped sprite
+    still render as an outlined colored square - real position/data, placeholder look.
+    Same reasoning as everywhere else in this repo: an unverified sprite crop can
+    render as visible garbage, which is worse than an honest placeholder.
+
+  Confirmed against a 1,636-entity real farm; remove + round-trip tested. Without an
+  assets folder set, the whole thing falls back to the flat-color abstract view.
+  `FarmMapEditor.UnmodeledTerrainFeatures` surfaces any terrain feature type we don't
+  render yet (e.g. planted crops/tilled soil - no save we've tested against had any)
+  so the view can say "there's also N tiles of X not shown" instead of silently
+  dropping them. **Buildings** (barns, coops, sheds - anything the player constructs)
+  aren't modeled or rendered at all yet - the reference save has none built, so there
+  was no real `<buildings>` data to ground that against. Only the Farm location is
+  covered; the save has dozens of others (Town, Beach, Mine, building interiors, ...)
+  that aren't touched - `TmxMap`/`MapAssetLoader` would work for any of them (they're
+  all just `.tmx` files after extraction), but there's no location-switching UI yet.
+
+  **Getting real tile art**: point the Map tab's "Extracted assets folder" field at a
+  folder unpacked by [StardewXnbHack](https://github.com/Pathoschild/StardewXnbHack)
+  (place its executable in your game folder, run it once - it needs SMAPI, same as the
+  Trainer mod). This produces plain `.tmx`/`.png` files, which is what `TmxMap` and
+  `MapAssetLoader` (in `StardewTools.SaveEditor/MapAssets/`) read directly - no XNB
+  decompression happens in this app at all. Those extracted files are the game's own
+  copyrighted art; they're never bundled with this app or committed to the repo. You
+  only need to set the folder once, though - it's saved to a local settings file
+  (`~/Library/Application Support/StardewTools/settings.json` on macOS, via
+  `AppSettings`) and reloaded automatically on every launch. Season is handled by swapping the `spring_` prefix on
+  tileset image names for `summer_`/`fall_`/`winter_` (confirmed: all four variants
+  exist on disk).
 
 ### Extracting real data from the game's own files
 
@@ -109,6 +139,14 @@ uses, and the extra type-id marker XNA writes before reference-type dictionary
 values), we got the exact IDs and names the game itself uses. That was a one-off
 extraction, not something the app does at runtime - the result is just baked into
 `GameEnums.AchievementNames`.
+
+That hand-rolled approach hit a real wall on larger assets: it correctly decompressed
+small files (achievements, item data) but broke partway through a ~2MB tilesheet
+texture, because XNA's block-compression framing has undocumented edge cases our
+reverse-engineering hadn't hit yet. Rather than keep guessing at a proprietary binary
+format, the tile art uses [StardewXnbHack](https://github.com/Pathoschild/StardewXnbHack)
+instead (see the Map section above) - it sidesteps the whole problem by decompressing
+through a real (if temporary) game instance rather than reimplementing the format.
 
 ## Ipc: how the live Trainer works
 
@@ -135,17 +173,27 @@ event, not an error.
 
 The Trainer project is a [SMAPI](https://smapi.io/) mod, built via the
 `Pathoschild.Stardew.ModBuildConfig` NuGet package, which auto-locates your game
-install and references its assemblies + SMAPI's at build time.
+install and references its assemblies + SMAPI's at build time. **Confirmed working
+end-to-end**: built, deployed, loaded by SMAPI with zero errors, and the app's
+Trainer tab connects to a real running game and polls live state correctly.
 
-**Known blocker on this machine:** the build package found `/Applications/Stardew
-Valley.app` but it's the older Mono-based build (pre-1.6), not the current
-.NET 6 build SMAPI 4.x's tooling expects. To build/run the Trainer:
+Setup, if starting fresh:
 
-1. Update Stardew Valley to 1.6+ (via Steam/GOG Galaxy).
-2. Install [SMAPI](https://smapi.io/) (its installer patches the game launch to load mods - a
-   change to your actual game install, so run it yourself rather than scripting it).
-3. `dotnet build StardewTools.Trainer` - on success this copies the mod into
+1. Update Stardew Valley to 1.6+ and install [SMAPI](https://smapi.io/) (its installer
+   patches the game launch to load mods - a change to your actual game install, so run
+   it yourself rather than scripting it).
+2. `dotnet build StardewTools.Trainer` - on success this copies the mod into
    your `Mods/` folder automatically; launch the game via SMAPI to test.
+
+**If you have more than one game install** (e.g. an old GOG copy alongside a newer
+Steam one), the mod build package's auto-detection just picks whichever it finds
+first, valid or not - it found the old copy here and refused to fall back. Fixed by
+setting `<GamePath>` explicitly in `StardewTools.Trainer.csproj` rather than touching
+either install:
+
+```xml
+<GamePath>/path/to/Steam/steamapps/common/Stardew Valley/Contents/MacOS</GamePath>
+```
 
 Core, Ipc, and the app itself don't depend on the game being installed at all.
 

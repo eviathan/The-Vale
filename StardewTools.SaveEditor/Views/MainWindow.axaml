@@ -215,9 +215,15 @@
                         <Grid ColumnDefinitions="*,220" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
                             <DockPanel Grid.Column="0">
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
+                                    <TextBlock Text="Extracted assets folder" VerticalAlignment="Center"/>
+                                    <TextBox Text="{Binding ContentFolder}" Width="300"/>
+                                    <Button Content="Browse..." Click="OnBrowseMapFolderClicked"/>
+                                </StackPanel>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
-                                           Text="Abstract layout, not the game's real terrain art - colored by entity type, positioned at real tile coordinates. Click a dot to select it."/>
-                                <controls:FarmMapControl Entities="{Binding Entities}" Selected="{Binding Selected}" Season="{Binding Season}"
+                                           Text="{Binding #FarmMap.Status}"/>
+                                <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
+                                                          Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           MinHeight="400"/>
                             </DockPanel>
 

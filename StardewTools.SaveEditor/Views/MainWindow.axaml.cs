@@ -48,4 +48,17 @@ public partial class MainWindow : Window
             ViewModel.StatusMessage = $"Failed to save: {ex.Message}";
         }
     }
+
+    private async void OnBrowseMapFolderClicked(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+        {
+            Title = "Select the folder unpacked by StardewXnbHack (contains a 'Maps' subfolder)",
+            AllowMultiple = false,
+        });
+
+        var folder = folders.FirstOrDefault();
+        if (folder is not null)
+            ViewModel.Map.ContentFolder = folder.Path.LocalPath;
+    }
 }
