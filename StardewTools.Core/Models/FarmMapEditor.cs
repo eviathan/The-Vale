@@ -55,10 +55,17 @@ public sealed class FarmMapEditor
             .Select(e => new PlacedObjectEditor(e.Position, e.Value))
             .ToList();
 
+    /// <summary>Player-constructed buildings - see BuildingEditor remarks on why this is unverified.</summary>
+    public IReadOnlyList<BuildingEditor> Buildings
+        => (_farmLocation.Element("buildings")?.Elements("Building") ?? Enumerable.Empty<XElement>())
+            .Select(e => new BuildingEditor(e))
+            .ToList();
+
     public void Remove(TreeEditor tree) => tree.Item.Remove();
     public void Remove(GrassEditor grass) => grass.Item.Remove();
     public void Remove(ResourceClumpEditor clump) => clump.Element.Remove();
     public void Remove(PlacedObjectEditor placedObject) => placedObject.WrappingItem.Remove();
+    public void Remove(BuildingEditor building) => building.Element.Remove();
 
     /// <summary>
     /// Walks a `&lt;name&gt;&lt;item&gt;&lt;key&gt;&lt;Vector2&gt;X/Y&lt;/Vector2&gt;&lt;/key&gt;

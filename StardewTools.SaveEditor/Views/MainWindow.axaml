@@ -5,12 +5,12 @@
         xmlns:conv="using:Avalonia.Data.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="820" d:DesignHeight="700"
+        mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="720"
         x:Class="StardewTools.SaveEditor.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="StardewTools"
-        Width="820" Height="720">
+        Width="960" Height="740" MinWidth="820" MinHeight="600">
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
@@ -212,26 +212,40 @@
                     </TabItem>
 
                     <TabItem Header="Map">
-                        <Grid ColumnDefinitions="*,220" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
+                        <Grid ColumnDefinitions="*,260" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
                             <DockPanel Grid.Column="0">
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
-                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
-                                    <TextBlock Text="Extracted assets folder" VerticalAlignment="Center"/>
-                                    <TextBox Text="{Binding ContentFolder}" Width="300"/>
-                                    <Button Content="Browse..." Click="OnBrowseMapFolderClicked"/>
-                                </StackPanel>
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,12,4">
+                                        <TextBlock Text="Location" VerticalAlignment="Center"/>
+                                        <ComboBox ItemsSource="{Binding AvailableLocations}" SelectedItem="{Binding SelectedLocationName}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+                                        <TextBlock Text="Assets folder" VerticalAlignment="Center"/>
+                                        <TextBox Text="{Binding ContentFolder}" Width="200"/>
+                                        <Button Content="Browse..." Click="OnBrowseMapFolderClicked"/>
+                                        <Button Content="Auto-Extract" Command="{Binding AutoExtractCommand}" IsEnabled="{Binding !IsExtracting}"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="{Binding ExtractStatus}" Opacity="0.7" Margin="0,0,0,6"
+                                           IsVisible="{Binding ExtractStatus, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
                                            Text="{Binding #FarmMap.Status}"/>
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
+                                                          LocationName="{Binding SelectedLocationName}"
                                                           MinHeight="400"/>
                             </DockPanel>
 
                             <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="10">
-                                <TextBlock Text="Selected" FontWeight="Bold"/>
-                                <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}"/>
-                                <Button Content="Remove" Command="{Binding RemoveSelectedCommand}" IsEnabled="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                <TextBlock Text="Selected entity" FontWeight="Bold" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                <Button Content="Remove" Command="{Binding RemoveSelectedCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+
+                                <TextBlock Text="Tile info" FontWeight="Bold" Margin="0,10,0,0"
+                                           IsVisible="{Binding #FarmMap.SelectedTileInfo, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
+                                <TextBlock Text="{Binding #FarmMap.SelectedTileInfo}" TextWrapping="Wrap" FontFamily="monospace" FontSize="11"/>
                             </StackPanel>
                         </Grid>
                     </TabItem>

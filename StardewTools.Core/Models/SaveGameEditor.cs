@@ -41,6 +41,21 @@ public sealed class SaveGameEditor
     public FarmEditor Farm { get; }
     public FarmMapEditor Map { get; }
 
+    /// <summary>
+    /// Every location this save tracks (Farm, FarmHouse, Town, Beach, Mine, ...) by its
+    /// xsi:type - confirmed real (this save alone has dozens). Only Farm has a typed editor
+    /// with placed-entity access so far; this is what a location picker can offer to at
+    /// least *view* (real tile art, no entity overlay) for everywhere else.
+    /// </summary>
+    public IReadOnlyList<string> LocationNames
+        => _saveFile.Root.Element("locations")?.Elements("GameLocation")
+            .Select(e => (string?)e.Attribute(XsiType))
+            .Where(name => name is not null)
+            .Select(name => name!)
+            .Distinct()
+            .ToList()
+        ?? new List<string>();
+
     public string Season
     {
         get => _saveFile.Root.GetChildText("currentSeason");

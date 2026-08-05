@@ -8,11 +8,12 @@ public enum MapEntityKind
     Grass,
     ResourceClump,
     Object,
+    Building,
 }
 
 /// <summary>
-/// A uniform, render-friendly view over the four map entity types Core exposes, so the
-/// map control only needs to know about one shape instead of four. <see cref="Source"/>
+/// A uniform, render-friendly view over the map entity types Core exposes, so the map
+/// control only needs to know about one shape instead of several. <see cref="Source"/>
 /// keeps the real typed editor around for the details panel and removal.
 /// </summary>
 public sealed class MapEntitySummary
@@ -22,6 +23,10 @@ public sealed class MapEntitySummary
     public required string Label { get; init; }
     public required string ColorHex { get; init; }
     public required object Source { get; init; }
+
+    /// <summary>Footprint in tiles - 1x1 for everything except buildings.</summary>
+    public int Width { get; init; } = 1;
+    public int Height { get; init; } = 1;
 
     public static MapEntitySummary FromTree(TreeEditor tree) => new()
     {
@@ -59,5 +64,16 @@ public sealed class MapEntitySummary
             : $"{placed.Item.Name} ({placed.Item.ItemType})",
         ColorHex = "#FF9800",
         Source = placed,
+    };
+
+    public static MapEntitySummary FromBuilding(BuildingEditor building) => new()
+    {
+        Position = building.Position,
+        Kind = MapEntityKind.Building,
+        Label = $"{building.BuildingType} ({building.Width}x{building.Height}) - unverified field names, see README",
+        ColorHex = "#B71C1C",
+        Source = building,
+        Width = building.Width,
+        Height = building.Height,
     };
 }

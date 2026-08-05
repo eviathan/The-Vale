@@ -102,28 +102,68 @@ Sub-tabs, each backed by its own `*Editor` class in Core:
     Same reasoning as everywhere else in this repo: an unverified sprite crop can
     render as visible garbage, which is worse than an honest placeholder.
 
+  **Depth**: terrain and entities are drawn row-by-row, interleaved (all of row 0's
+  terrain+entities, then row 1's, ...) rather than "all terrain, then all entities" -
+  this approximates the game's Y-sorted draw order, so a tall tree sprite correctly
+  occludes/is occluded by whatever's drawn in neighboring rows. Not a full scene graph.
+  When something's selected, any tree that could plausibly be covering it (same/later
+  row within canopy-reach, nearby horizontally) draws at reduced opacity, and the
+  selection itself is redrawn on top as a final pass so it's never fully hidden.
+  Confirmed the mechanism targets the right entity and runs without error (found a
+  real tree-behind-tree pair in the live save and selected it programmatically to
+  check), but couldn't visually confirm the opacity difference itself - the map
+  renders too small in a screenshot to distinguish 0.35 vs 1.0 opacity on one tree
+  among 143 by eye. Worth a manual look once you're driving the UI yourself.
+
   Confirmed against a 1,636-entity real farm; remove + round-trip tested. Without an
   assets folder set, the whole thing falls back to the flat-color abstract view.
   `FarmMapEditor.UnmodeledTerrainFeatures` surfaces any terrain feature type we don't
   render yet (e.g. planted crops/tilled soil - no save we've tested against had any)
   so the view can say "there's also N tiles of X not shown" instead of silently
-  dropping them. **Buildings** (barns, coops, sheds - anything the player constructs)
-  aren't modeled or rendered at all yet - the reference save has none built, so there
-  was no real `<buildings>` data to ground that against. Only the Farm location is
-  covered; the save has dozens of others (Town, Beach, Mine, building interiors, ...)
-  that aren't touched - `TmxMap`/`MapAssetLoader` would work for any of them (they're
-  all just `.tmx` files after extraction), but there's no location-switching UI yet.
+  dropping them.
 
-  **Getting real tile art**: point the Map tab's "Extracted assets folder" field at a
-  folder unpacked by [StardewXnbHack](https://github.com/Pathoschild/StardewXnbHack)
-  (place its executable in your game folder, run it once - it needs SMAPI, same as the
-  Trainer mod). This produces plain `.tmx`/`.png` files, which is what `TmxMap` and
+  **Tile inspection**: clicking empty space (no entity there) reports every layer's
+  tile at that position and its real TMX properties (Diggable/Buildable/Type/...) in
+  the side panel - confirmed against the real Farm map. These are base-map properties
+  (fixed game design, not save-tracked data), so there's nothing to write back here;
+  what *is* save-tracked at a tile (a planted crop, tilled soil) would go through the
+  entity system instead, once that schema is verified the way everything else has been.
+
+  **Buildings** (barns, coops, sheds): modeled and rendered (`BuildingEditor`,
+  `MapEntitySummary.FromBuilding`) as a translucent footprint-sized rectangle sized to
+  the building's real width/height. Unverified against real data, same as resource
+  clumps - the reference save has never had one built, so there was no real
+  `<buildings>` content to confirm field names (`buildingType`/`tileX`/`tileY`/
+  `tilesWide`/`tilesHigh`) against. Parsing logic itself *is* verified, via a synthetic
+  building injected into a copy of the real save (same technique used earlier for
+  chest detection) - confirmed it's found, positioned, and sized correctly; only the
+  field names are still a best-effort guess pending a real example.
+
+  **Every location**: a "Location" picker (populated from `SaveGameEditor.LocationNames`
+  - every location this save actually has, confirmed real) lets you view the real tile
+  art for any of them, not just the Farm - `TmxMap`/`MapAssetLoader` work for any
+  `.tmx` file StardewXnbHack extracts. Placed-entity data (trees/objects/clumps/
+  buildings) is still Farm-only; other locations show terrain with no overlay.
+
+  **Getting real tile art**: click "Auto-Extract" in the Map tab. `TileArtExtractor`
+  finds your local game install, downloads
+  [StardewXnbHack](https://github.com/Pathoschild/StardewXnbHack) (MIT licensed - it's
+  code, not game assets) if it isn't already there, runs it, and points the app at the
+  result automatically - no manual tool placement or terminal use. (A manual "Browse..."
+  is still there as a fallback.) Building this surfaced a real bug worth noting: the
+  first version redirected the tool's stdout/stderr without ever reading them, which
+  fills the OS pipe buffer and makes the child process block on its own output -
+  looked like a hang. Fixed by draining both streams concurrently with the wait, not
+  after it. This produces plain `.tmx`/`.png` files, which is what `TmxMap` and
   `MapAssetLoader` (in `StardewTools.SaveEditor/MapAssets/`) read directly - no XNB
   decompression happens in this app at all. Those extracted files are the game's own
-  copyrighted art; they're never bundled with this app or committed to the repo. You
-  only need to set the folder once, though - it's saved to a local settings file
-  (`~/Library/Application Support/StardewTools/settings.json` on macOS, via
-  `AppSettings`) and reloaded automatically on every launch. Season is handled by swapping the `spring_` prefix on
+  copyrighted art; they're never bundled with this app or committed to the repo - only
+  the (MIT-licensed, asset-free) extractor tool itself gets downloaded automatically.
+  You only need to extract once per game update, though - the path is saved to a local
+  settings file (`~/Library/Application Support/StardewTools/settings.json` on macOS,
+  via `AppSettings`) and reloaded automatically on every launch; if that file is ever
+  missing, `GameInstallLocator` searches common Steam/GOG paths before falling back to
+  asking. Season is handled by swapping the `spring_` prefix on
   tileset image names for `summer_`/`fall_`/`winter_` (confirmed: all four variants
   exist on disk).
 

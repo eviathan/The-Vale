@@ -13,10 +13,13 @@ namespace StardewTools.SaveEditor.Controls;
 
 /// <summary>
 /// Draws the farm. When <see cref="ContentFolder"/> points at a real StardewXnbHack
-/// extraction, this renders the game's actual tile art (terrain, paths, buildings) with
-/// placed entities (trees, grass, resource clumps, objects) overlaid as colored dots at
-/// their real tile position. Without a content folder, it falls back to the same abstract
-/// flat-color dot grid as before, scaled to the entities' own bounding box.
+/// extraction, this renders the game's actual tile art (terrain, paths, buildings), with
+/// placed entities drawn as real sprites where we have a verified sprite sheet mapping
+/// (trees, objects) and an outlined marker otherwise (resource clumps, unmapped tree types).
+/// Entities are interleaved row-by-row with the terrain layers so a tall sprite occludes
+/// (and is occluded by) neighboring rows correctly, approximating the game's Y-sorted draw
+/// order without a full scene graph. Without a content folder, it falls back to an abstract
+/// flat-color dot grid scaled to the entities' own bounding box.
 /// </summary>
 public sealed class FarmMapControl : Control
 {
@@ -34,6 +37,12 @@ public sealed class FarmMapControl : Control
 
     public static readonly StyledProperty<string> StatusProperty =
         AvaloniaProperty.Register<FarmMapControl, string>(nameof(Status), "Abstract view (no tile art loaded).");
+
+    public static readonly StyledProperty<string?> SelectedTileInfoProperty =
+        AvaloniaProperty.Register<FarmMapControl, string?>(nameof(SelectedTileInfo));
+
+    public static readonly StyledProperty<string> LocationNameProperty =
+        AvaloniaProperty.Register<FarmMapControl, string>(nameof(LocationName), "Farm");
 
     public IEnumerable<MapEntitySummary>? Entities
     {
@@ -66,9 +75,33 @@ public sealed class FarmMapControl : Control
         private set => SetValue(StatusProperty, value);
     }
 
+    /// <summary>
+    /// Human-readable dump of every layer's tile (and its TMX properties, e.g. Diggable/
+    /// Buildable/Type) at the last-clicked position that didn't hit an entity. Read-only -
+    /// these are base map properties (fixed game design), not save-tracked data, so there's
+    /// nothing here to write back; what IS save-tracked at a tile (a planted crop, tilled
+    /// soil) goes through the entity system instead once that schema is verified.
+    /// </summary>
+    public string? SelectedTileInfo
+    {
+        get => GetValue(SelectedTileInfoProperty);
+        private set => SetValue(SelectedTileInfoProperty, value);
+    }
+
+    /// <summary>
+    /// Which location's map to render, by its save xsi:type name (e.g. "Farm", "Town",
+    /// "Beach"). Only "Farm" has placed-entity data bound to it today - other locations
+    /// render real tile art with no entity overlay.
+    /// </summary>
+    public string LocationName
+    {
+        get => GetValue(LocationNameProperty);
+        set => SetValue(LocationNameProperty, value);
+    }
+
     static FarmMapControl()
     {
-        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty);
+        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty);
     }
 
     private static readonly IReadOnlyDictionary<string, Color> SeasonBackgrounds = new Dictionary<string, Color>
@@ -82,19 +115,24 @@ public sealed class FarmMapControl : Control
     private MapAssetLoader? _loader;
     private TmxMap? _map;
     private string? _loadedFolder;
+    private string? _loadedLocation;
     private (double MinX, double MinY, double Scale)? _lastLayout;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
 
-        if (change.Property == ContentFolderProperty && ContentFolder != _loadedFolder)
+        if ((change.Property == ContentFolderProperty || change.Property == LocationNameProperty)
+            && (ContentFolder != _loadedFolder || LocationName != _loadedLocation))
+        {
             TryLoadMap();
+        }
     }
 
     private void TryLoadMap()
     {
         _loadedFolder = ContentFolder;
+        _loadedLocation = LocationName;
         _map = null;
         _loader = null;
 
@@ -107,8 +145,8 @@ public sealed class FarmMapControl : Control
         try
         {
             _loader = new MapAssetLoader(ContentFolder);
-            _map = _loader.LoadFarmMap();
-            Status = $"Real tile art loaded from {ContentFolder}.";
+            _map = _loader.LoadMap(LocationName);
+            Status = $"Real tile art loaded for {LocationName} from {ContentFolder}.";
         }
         catch (Exception ex)
         {
@@ -134,46 +172,99 @@ public sealed class FarmMapControl : Control
         var mapPixelWidth = map.Width * map.TileWidth;
         var mapPixelHeight = map.Height * map.TileHeight;
         var scale = Math.Max(0.01, Math.Min(Bounds.Width / mapPixelWidth, Bounds.Height / mapPixelHeight));
-        _lastLayout = (0, 0, scale * map.TileWidth); // Scale is per-tile here, not per-pixel - see hit-testing below.
 
-        context.FillRectangle(Brushes.Black, new Rect(Bounds.Size));
+        // Center the map instead of anchoring at (0,0) - the map's aspect ratio rarely matches
+        // the control's exactly, so one dimension always has leftover space. That space used to
+        // be a flat black fill reaching the control edge, which read as a rendering bug rather
+        // than a letterboxing bar.
+        var offsetX = (Bounds.Width - mapPixelWidth * scale) / 2;
+        var offsetY = (Bounds.Height - mapPixelHeight * scale) / 2;
+        var tileScale = scale * map.TileWidth;
+        _lastLayout = (-offsetX / tileScale, -offsetY / tileScale, tileScale); // Scale is per-tile here, not per-pixel - see hit-testing below.
 
-        void DrawLayer(string name)
+        context.FillRectangle(new SolidColorBrush(Color.Parse("#1a1a1a")), new Rect(Bounds.Size));
+
+        void DrawLayerRow(string name, int y)
         {
             var layer = map.Layers.FirstOrDefault(l => l.Name == name);
             if (layer is null)
                 return;
 
-            for (var y = 0; y < map.Height; y++)
+            for (var x = 0; x < map.Width; x++)
             {
-                for (var x = 0; x < map.Width; x++)
-                {
-                    var gid = layer.Tiles[y * map.Width + x];
-                    var tileset = map.TilesetFor(gid);
-                    if (tileset is null)
-                        continue;
+                var gid = layer.Tiles[y * map.Width + x];
+                var tileset = map.TilesetFor(gid);
+                if (tileset is null)
+                    continue;
 
-                    var bitmap = loader.GetTilesetBitmap(tileset.ImageSource, Season);
-                    var (col, row) = tileset.TilePosition(gid);
-                    var source = new Rect(col * tileset.TileWidth, row * tileset.TileHeight, tileset.TileWidth, tileset.TileHeight);
-                    var dest = new Rect(x * map.TileWidth * scale, y * map.TileHeight * scale, map.TileWidth * scale, map.TileHeight * scale);
-                    context.DrawImage(bitmap, source, dest);
-                }
+                var bitmap = loader.GetTilesetBitmap(tileset.ImageSource, Season);
+                var (col, row) = tileset.TilePosition(gid);
+                var source = new Rect(col * tileset.TileWidth, row * tileset.TileHeight, tileset.TileWidth, tileset.TileHeight);
+                var dest = new Rect(offsetX + x * map.TileWidth * scale, offsetY + y * map.TileHeight * scale, map.TileWidth * scale, map.TileHeight * scale);
+                context.DrawImage(bitmap, source, dest);
             }
         }
 
-        DrawLayer("Back");
-        DrawLayer("Buildings");
-        DrawLayer("Paths");
+        void DrawLayerFull(string name)
+        {
+            for (var y = 0; y < map.Height; y++)
+                DrawLayerRow(name, y);
+        }
 
-        // Grass is already visible in the real terrain art (it's baked into the Back layer
-        // as ground texture) - drawing a marker per grass tile on top just adds noise, unlike
-        // trees/objects/clumps which aren't part of the base map and need one to be visible/selectable.
-        DrawEntities(context, 0, 0, scale * map.TileWidth, skipGrass: true);
+        // Grass is already baked into the Back layer as ground texture - a marker per tile
+        // would just be noise on top of it, unlike trees/objects/clumps which aren't part of
+        // the base map at all.
+        var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>())
+            .Where(e => e.Kind != MapEntityKind.Grass)
+            .ToLookup(e => e.Position.Y);
 
-        DrawLayer("Front");
-        DrawLayer("AlwaysFront");
-        DrawLayer("AlwaysFront2");
+        var allEntities = entitiesByRow.SelectMany(g => g).ToList();
+
+        // Row-by-row interleaving approximates the game's Y-sorted draw order: a tall sprite
+        // (like a tree canopy) drawn in its own row still visually overlaps rows above it
+        // (already drawn), while anything in a row below draws over it in turn - so two trees
+        // stacked vertically occlude each other in the right order without a full scene graph.
+        for (var y = 0; y < map.Height; y++)
+        {
+            DrawLayerRow("Back", y);
+            DrawLayerRow("Buildings", y);
+            DrawLayerRow("Paths", y);
+
+            foreach (var entity in entitiesByRow[y])
+            {
+                var opacity = Selected is { } sel && !ReferenceEquals(entity, sel) && Occludes(entity, sel) ? 0.35 : 1.0;
+                DrawSingleEntity(context, entity, offsetX, offsetY, tileScale, opacity);
+            }
+        }
+
+        DrawLayerFull("Front");
+        DrawLayerFull("AlwaysFront");
+        DrawLayerFull("AlwaysFront2");
+
+        // Guarantee the selection stays visible even if something drawn after it (a taller
+        // sprite in a later row, or a Front-layer tile) would otherwise cover it - the actual
+        // occluder was already drawn translucent above, but redrawing the selection itself on
+        // top handles cases the opacity pass doesn't catch (e.g. Front-layer tiles).
+        if (Selected is { } selected && allEntities.Contains(selected))
+            DrawSingleEntity(context, selected, offsetX, offsetY, tileScale, 1.0);
+    }
+
+    /// <summary>
+    /// Best-effort check for whether <paramref name="candidate"/>, drawn at or after
+    /// <paramref name="selected"/>'s row, could visually cover it - only trees are tall
+    /// enough to reach back into an earlier row's space, so this only flags nearby trees
+    /// drawn in the same or a following row within canopy-height range.
+    /// </summary>
+    private static bool Occludes(MapEntitySummary candidate, MapEntitySummary selected)
+    {
+        if (candidate.Kind != MapEntityKind.Tree)
+            return false;
+
+        var dy = candidate.Position.Y - selected.Position.Y;
+        if (dy < 0 || dy > 4)
+            return false;
+
+        return Math.Abs(candidate.Position.X - selected.Position.X) <= 2;
     }
 
     private void RenderAbstract(DrawingContext context)
@@ -196,61 +287,60 @@ public sealed class FarmMapControl : Control
         var spanX = Math.Max(1, maxX - minX + 1);
         var spanY = Math.Max(1, maxY - minY + 1);
         var scale = Math.Max(1.0, Math.Min(Bounds.Width / spanX, Bounds.Height / spanY));
+        _lastLayout = (minX, minY, scale);
 
-        DrawEntities(context, minX, minY, scale);
+        var offsetX = -minX * scale;
+        var offsetY = -minY * scale;
+        foreach (var entity in entities)
+            DrawSingleEntity(context, entity, offsetX, offsetY, scale);
     }
 
-    private void DrawEntities(DrawingContext context, double originX, double originY, double scale, bool skipGrass = false)
+    /// <summary>
+    /// Draws one entity at its real tile position. <paramref name="pixelOffset"/> converts
+    /// tile coordinates to screen pixels (already includes any letterbox centering);
+    /// <paramref name="scale"/> is screen pixels per tile. <paramref name="opacity"/> lets an
+    /// occluding entity be drawn translucent so a selection behind it stays visible.
+    /// </summary>
+    private void DrawSingleEntity(DrawingContext context, MapEntitySummary entity, double pixelOffsetX, double pixelOffsetY, double scale, double opacity = 1.0)
     {
-        var entities = Entities?.ToList();
-        if (entities is null || entities.Count == 0)
+        using var opacityScope = context.PushOpacity(opacity);
+
+        if (entity.Kind == MapEntityKind.Tree && entity.Source is TreeEditor tree
+            && !string.IsNullOrEmpty(ContentFolder)
+            && TryDrawTreeSprite(context, tree, entity.Position, pixelOffsetX, pixelOffsetY, scale))
         {
-            _lastLayout = (originX, originY, scale);
             return;
         }
 
-        _lastLayout = (originX, originY, scale);
-        var dotSize = Math.Max(2.5, scale * 0.8);
-        var outline = new Pen(Brushes.Black, Math.Max(0.5, scale * 0.08));
-
-        foreach (var entity in entities)
+        if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor placed
+            && !string.IsNullOrEmpty(ContentFolder) && placed.Item.ParentSheetIndex is int index
+            && ObjectSprites.TryGetSprite(ContentFolder, index, out var objBitmap, out var objSource))
         {
-            if (skipGrass && entity.Kind == MapEntityKind.Grass)
-                continue;
-
-            if (entity.Kind == MapEntityKind.Tree && entity.Source is TreeEditor tree
-                && !string.IsNullOrEmpty(ContentFolder)
-                && TryDrawTreeSprite(context, tree, entity.Position, originX, originY, scale))
-            {
-                continue;
-            }
-
-            if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor placed
-                && !string.IsNullOrEmpty(ContentFolder) && placed.Item.ParentSheetIndex is int index
-                && ObjectSprites.TryGetSprite(ContentFolder, index, out var objBitmap, out var objSource))
-            {
-                var ox = (entity.Position.X - originX) * scale;
-                var oy = (entity.Position.Y - originY) * scale;
-                context.DrawImage(objBitmap, objSource, new Rect(ox, oy, scale, scale));
-                continue;
-            }
-
-            var x = (entity.Position.X - originX) * scale;
-            var y = (entity.Position.Y - originY) * scale;
-            var brush = new SolidColorBrush(Color.Parse(entity.ColorHex));
-            var rect = new Rect(x, y, dotSize, dotSize);
-            // An outline keeps markers visible regardless of what's underneath - without one,
-            // e.g. an orange rock marker on orange tilled dirt is nearly invisible.
-            context.FillRectangle(brush, rect);
-            context.DrawRectangle(outline, rect);
+            var ox = pixelOffsetX + entity.Position.X * scale;
+            var oy = pixelOffsetY + entity.Position.Y * scale;
+            context.DrawImage(objBitmap, objSource, new Rect(ox, oy, scale, scale));
+            return;
         }
 
-        if (Selected is { } selected)
+        // Multi-tile entities (buildings) fill their real footprint; everything else gets a
+        // marker slightly smaller than one tile.
+        var isFootprint = entity.Width > 1 || entity.Height > 1;
+        var width = isFootprint ? entity.Width * scale : Math.Max(2.5, scale * 0.8);
+        var height = isFootprint ? entity.Height * scale : Math.Max(2.5, scale * 0.8);
+        var x = pixelOffsetX + entity.Position.X * scale;
+        var y = pixelOffsetY + entity.Position.Y * scale;
+        var brush = new SolidColorBrush(Color.Parse(entity.ColorHex)) { Opacity = isFootprint ? 0.6 : 1.0 };
+        var rect = new Rect(x, y, width, height);
+        // An outline keeps markers visible regardless of what's underneath - without one,
+        // e.g. an orange rock marker on orange tilled dirt is nearly invisible.
+        var outline = new Pen(Brushes.Black, Math.Max(0.5, scale * 0.08));
+        context.FillRectangle(brush, rect);
+        context.DrawRectangle(outline, rect);
+
+        if (ReferenceEquals(entity, Selected))
         {
-            var x = (selected.Position.X - originX) * scale;
-            var y = (selected.Position.Y - originY) * scale;
             var pen = new Pen(Brushes.Red, 2);
-            context.DrawRectangle(pen, new Rect(x - 2, y - 2, dotSize + 4, dotSize + 4));
+            context.DrawRectangle(pen, new Rect(x - 2, y - 2, width + 4, height + 4));
         }
     }
 
@@ -262,7 +352,7 @@ public sealed class FarmMapControl : Control
     /// place beats an accurate-stage square marker. Returns false (caller falls back to the
     /// marker) for tree types we haven't mapped to a real sprite sheet.
     /// </summary>
-    private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double originX, double originY, double scale)
+    private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale)
     {
         var variant = (position.X * 3 + position.Y * 7) % 2;
         if (!TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, variant, out var bitmap, out var source))
@@ -272,8 +362,8 @@ public sealed class FarmMapControl : Control
         var width = source.Width * pixelsPerSourcePixel;
         var height = source.Height * pixelsPerSourcePixel;
 
-        var tileLeft = (position.X - originX) * scale;
-        var tileBottom = (position.Y - originY) * scale + scale;
+        var tileLeft = pixelOffsetX + position.X * scale;
+        var tileBottom = pixelOffsetY + position.Y * scale + scale;
         var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
 
         context.DrawImage(bitmap, source, dest);
@@ -291,12 +381,46 @@ public sealed class FarmMapControl : Control
         var tileX = point.X / layout.Scale + layout.MinX;
         var tileY = point.Y / layout.Scale + layout.MinY;
 
+        // Distance to the nearest point of the entity's footprint, not just its top-left tile -
+        // otherwise a multi-tile building is only clickable right at one corner.
+        double DistanceSq(MapEntitySummary entity)
+        {
+            var dx = Math.Max(0, Math.Max(entity.Position.X - tileX, tileX - (entity.Position.X + entity.Width - 1)));
+            var dy = Math.Max(0, Math.Max(entity.Position.Y - tileY, tileY - (entity.Position.Y + entity.Height - 1)));
+            return dx * dx + dy * dy;
+        }
+
         var nearest = Entities
-            .Select(entity => (entity, distSq: Math.Pow(entity.Position.X - tileX, 2) + Math.Pow(entity.Position.Y - tileY, 2)))
+            .Select(entity => (entity, distSq: DistanceSq(entity)))
             .OrderBy(e => e.distSq)
             .FirstOrDefault();
 
         if (nearest.entity is not null && nearest.distSq <= 1.0)
+        {
             Selected = nearest.entity;
+            SelectedTileInfo = null;
+            return;
+        }
+
+        // Nothing dynamic there - report the base map's tile(s), if we have real tile art loaded.
+        Selected = null;
+        SelectedTileInfo = _map is null ? null : DescribeTile((int)Math.Floor(tileX), (int)Math.Floor(tileY));
+    }
+
+    private string DescribeTile(int x, int y)
+    {
+        var layers = _map!.GetTileInfo(x, y);
+        if (layers.Count == 0)
+            return $"Tile ({x},{y}): nothing here on any layer.";
+
+        var lines = layers.Select(l =>
+        {
+            var props = l.Properties.Count == 0
+                ? ""
+                : " - " + string.Join(", ", l.Properties.Select(p => $"{p.Key}={p.Value}"));
+            return $"{l.LayerName}: gid {l.Gid} ({l.TilesetImage}){props}";
+        });
+
+        return $"Tile ({x},{y}):\n" + string.Join("\n", lines);
     }
 }

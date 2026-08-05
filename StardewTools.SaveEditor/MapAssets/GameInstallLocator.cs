@@ -12,7 +12,7 @@ namespace StardewTools.SaveEditor.MapAssets;
 /// </summary>
 public static class GameInstallLocator
 {
-    private static IEnumerable<string> CandidateGameFolders()
+    public static IEnumerable<string> CandidateGameFolders()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
@@ -24,6 +24,11 @@ public static class GameInstallLocator
         yield return Path.Combine(home, ".steam/steam/steamapps/common/Stardew Valley");
         yield return @"C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley";
     }
+
+    /// <summary>The first candidate folder that looks like an actual game install (has a Mods subfolder or a Stardew Valley executable/deps file).</summary>
+    public static string? FindGameFolder()
+        => CandidateGameFolders().FirstOrDefault(f =>
+            Directory.Exists(f) && (Directory.Exists(Path.Combine(f, "Mods")) || File.Exists(Path.Combine(f, "Stardew Valley.deps.json"))));
 
     /// <summary>Returns the first "Content (unpacked)" folder found next to a candidate game install, or null.</summary>
     public static string? FindExtractedContentFolder()

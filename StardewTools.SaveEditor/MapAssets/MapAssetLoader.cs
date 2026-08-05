@@ -21,7 +21,17 @@ public sealed class MapAssetLoader
         _mapsFolder = Path.Combine(contentUnpackedFolder, "Maps");
     }
 
-    public TmxMap LoadFarmMap() => TmxMap.Load(Path.Combine(_mapsFolder, "Farm.tmx"));
+    public TmxMap LoadFarmMap() => LoadMap("Farm");
+
+    /// <summary>
+    /// Loads any location by its save xsi:type name (e.g. "Town", "Beach", "Mine") - these
+    /// are the same .tmx files StardewXnbHack extracts for every map in the game, so this
+    /// works for anywhere as long as the name matches a real file (some locations, like Mine
+    /// levels, aren't a single simple map and won't resolve here).
+    /// </summary>
+    public TmxMap LoadMap(string locationName) => TmxMap.Load(Path.Combine(_mapsFolder, locationName + ".tmx"));
+
+    public bool HasMap(string locationName) => File.Exists(Path.Combine(_mapsFolder, locationName + ".tmx"));
 
     /// <summary>
     /// Resolves a tileset's declared image source to a season-appropriate bitmap. Stardew's
