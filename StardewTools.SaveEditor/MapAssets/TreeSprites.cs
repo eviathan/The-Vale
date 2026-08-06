@@ -29,8 +29,35 @@ public static class TreeSprites
 
     public static bool TryGetAdultSprite(string contentFolder, int treeType, string season, int variant, out Bitmap bitmap, out Rect source)
     {
+        if (!TryGetBitmap(contentFolder, treeType, season, out bitmap))
+        {
+            source = default;
+            return false;
+        }
+
+        var col = variant % 2;
+        source = new Rect(col * 96, 4, 48, 80);
+        return true;
+    }
+
+    /// <summary>Source rect for a chopped stump - Rectangle(32, 96, 16, 32) in the decompiled
+    /// Tree.cs, a single static field shared by every tree type/season (not something that
+    /// varies per texture the way the adult sprite's two variants do).</summary>
+    public static bool TryGetStumpSprite(string contentFolder, int treeType, string season, out Bitmap bitmap, out Rect source)
+    {
+        if (!TryGetBitmap(contentFolder, treeType, season, out bitmap))
+        {
+            source = default;
+            return false;
+        }
+
+        source = new Rect(32, 96, 16, 32);
+        return true;
+    }
+
+    private static bool TryGetBitmap(string contentFolder, int treeType, string season, out Bitmap bitmap)
+    {
         bitmap = null!;
-        source = default;
 
         if (!KnownTypeFiles.TryGetValue(treeType, out var baseName))
             return false;
@@ -47,8 +74,6 @@ public static class TreeSprites
         }
 
         bitmap = loaded;
-        var col = variant % 2;
-        source = new Rect(col * 96, 4, 48, 80);
         return true;
     }
 }

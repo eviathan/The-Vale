@@ -78,6 +78,13 @@
                                     <TextBlock Text="Year"/>
                                     <NumericUpDown Value="{Binding Year}" Minimum="1" Maximum="9999"/>
                                 </StackPanel>
+                                <TextBlock Text="Skills" FontWeight="Bold" Margin="0,12,0,0"/>
+                                <StackPanel Classes="field"><TextBlock Text="Farming"/><NumericUpDown Value="{Binding FarmingLevel}" Minimum="0" Maximum="10"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Fishing"/><NumericUpDown Value="{Binding FishingLevel}" Minimum="0" Maximum="10"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Foraging"/><NumericUpDown Value="{Binding ForagingLevel}" Minimum="0" Maximum="10"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Mining"/><NumericUpDown Value="{Binding MiningLevel}" Minimum="0" Maximum="10"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Combat"/><NumericUpDown Value="{Binding CombatLevel}" Minimum="0" Maximum="10"/></StackPanel>
+                                <StackPanel Classes="field"><TextBlock Text="Luck"/><NumericUpDown Value="{Binding LuckLevel}" Minimum="0" Maximum="10"/></StackPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -236,18 +243,34 @@
                                                           LocationName="{Binding SelectedLocationName}"
                                                           HouseUpgradeLevel="{Binding HouseUpgradeLevel}"
                                                           ClickedTile="{Binding ClickedTile}"
+                                                          SelectedRange="{Binding SelectedRange}"
                                                           MinHeight="400"/>
                             </DockPanel>
 
                             <ScrollViewer Grid.Column="1" Margin="16,0,0,0">
                                 <StackPanel Spacing="10">
+                                    <StackPanel Spacing="6" IsVisible="{Binding HasSelectedRange}">
+                                        <TextBlock Text="{Binding SelectedRange.Count, StringFormat='Range selection ({0})'}" FontWeight="Bold"/>
+                                        <TextBlock Text="Click and drag on the map to select an area." Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
+                                        <Button Content="{Binding SelectedRange.Count, StringFormat='Collect Selected ({0})'}" Command="{Binding CollectRangeCommand}"/>
+                                        <TextBlock Text="Removes each entity and adds its real yield (wood, ore, harvested crop, ...) to your inventory where one exists."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                        <Button Content="{Binding SelectedRange.Count, StringFormat='Remove Selected ({0})'}" Command="{Binding RemoveRangeCommand}"/>
+                                    </StackPanel>
+
                                     <TextBlock Text="Place item" FontWeight="Bold"/>
                                     <TextBlock Text="{Binding ClickedTile, StringFormat='At tile: {0}', TargetNullValue='Click a tile on the map first'}"
                                                Opacity="0.7" TextWrapping="Wrap"/>
                                     <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableItems}" SelectedItem="{Binding SelectedPlaceableItem}"
                                                       FilterMode="Contains" Watermark="Search items..."/>
                                     <Button Content="Place" Command="{Binding PlaceObjectCommand}"/>
-                                    <TextBlock Text="Only plain objects (debris, produce, forage, etc.) can be placed so far - trees, buildings and animals need their own pickers with type-specific defaults."
+                                    <TextBlock Text="Only plain objects (debris, produce, forage, etc.) can be placed so far - trees and animals need their own pickers with type-specific defaults."
+                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+
+                                    <TextBlock Text="Place building" FontWeight="Bold" Margin="0,10,0,0"/>
+                                    <ComboBox ItemsSource="{Binding AvailablePlaceableBuildings}" SelectedItem="{Binding SelectedPlaceableBuilding}" HorizontalAlignment="Stretch"/>
+                                    <Button Content="Place" Command="{Binding PlaceBuildingCommand}"/>
+                                    <TextBlock Text="Only buildings with no interior (Gold Clock, Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable, Shipping Bin, Junimo Hut) - Barn/Coop/etc. need their interior location verified first."
                                                Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
 
                                     <TextBlock Text="Selected entity" FontWeight="Bold" Margin="0,10,0,0" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>

@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using StardewTools.Core.Models;
 using StardewTools.SaveEditor.MapAssets;
 using StardewTools.SaveEditor.ViewModels;
@@ -49,6 +50,9 @@ public sealed class FarmMapControl : Control
 
     public static readonly StyledProperty<TilePosition?> ClickedTileProperty =
         AvaloniaProperty.Register<FarmMapControl, TilePosition?>(nameof(ClickedTile), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    public static readonly StyledProperty<IReadOnlyList<MapEntitySummary>> SelectedRangeProperty =
+        AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<MapEntitySummary>>(nameof(SelectedRange), Array.Empty<MapEntitySummary>(), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
 
     public IEnumerable<MapEntitySummary>? Entities
     {
@@ -122,6 +126,15 @@ public sealed class FarmMapControl : Control
         private set => SetValue(ClickedTileProperty, value);
     }
 
+    /// <summary>Every entity whose footprint intersects the last click-and-drag rectangle -
+    /// empty when nothing's drag-selected (including after a plain, non-drag click, which
+    /// goes through Selected instead). Set once on release, not live during the drag itself.</summary>
+    public IReadOnlyList<MapEntitySummary> SelectedRange
+    {
+        get => GetValue(SelectedRangeProperty);
+        private set => SetValue(SelectedRangeProperty, value);
+    }
+
     static FarmMapControl()
     {
         AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty);
@@ -140,6 +153,9 @@ public sealed class FarmMapControl : Control
     private string? _loadedFolder;
     private string? _loadedLocation;
     private (double MinX, double MinY, double Scale)? _lastLayout;
+    private TilePosition? _dragStartTile;
+    private TilePosition? _dragCurrentTile;
+    private bool _isDragging;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -182,12 +198,34 @@ public sealed class FarmMapControl : Control
     public override void Render(DrawingContext context)
     {
         if (_map is not null && _loader is not null)
-        {
             RenderRealMap(context, _map, _loader);
-            return;
-        }
+        else
+            RenderAbstract(context);
 
-        RenderAbstract(context);
+        DrawMarquee(context);
+    }
+
+    /// <summary>The live rectangle overlay while a drag-select is in progress - drawn after
+    /// either render path so it works the same in real-map and abstract-view modes, since
+    /// both populate _lastLayout the same way.</summary>
+    private void DrawMarquee(DrawingContext context)
+    {
+        if (!_isDragging || _lastLayout is not { } layout || _dragStartTile is not { } start || _dragCurrentTile is not { } current)
+            return;
+
+        var minX = Math.Min(start.X, current.X);
+        var maxX = Math.Max(start.X, current.X) + 1;
+        var minY = Math.Min(start.Y, current.Y);
+        var maxY = Math.Max(start.Y, current.Y) + 1;
+
+        var rect = new Rect(
+            (minX - layout.MinX) * layout.Scale,
+            (minY - layout.MinY) * layout.Scale,
+            (maxX - minX) * layout.Scale,
+            (maxY - minY) * layout.Scale);
+
+        context.FillRectangle(new SolidColorBrush(Color.Parse("#503B82F6")), rect);
+        context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#3B82F6")), 2), rect);
     }
 
     private void RenderRealMap(DrawingContext context, TmxMap map, MapAssetLoader loader)
@@ -247,7 +285,14 @@ public sealed class FarmMapControl : Control
             .ToList();
         var beforeEntityLayers = visibleLayers.Except(afterEntityLayers).ToList();
 
-        var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>()).ToLookup(e => e.Position.Y);
+        // Keyed by each entity's BOTTOM row (Position.Y + Height - 1), not its top row - for
+        // 1-tall entities (everything except Buildings and multi-tile ResourceClumps) that's
+        // the same row either way, but a multi-row-tall entity drawn at its top row would get
+        // its lower rows painted over when the loop reached that next row's own terrain layers
+        // afterward (terrain-for-row-Y+1 is drawn after entity-for-row-Y, but a 2-tall entity
+        // triggered at row Y already occupies row Y+1 too). Drawing it once its bottom-most
+        // row's terrain is already down avoids that.
+        var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>()).ToLookup(e => e.Position.Y + e.Height - 1);
         var allEntities = entitiesByRow.SelectMany(g => g).ToList();
 
         // Row-by-row interleaving approximates the game's Y-sorted draw order: a tall sprite
@@ -354,6 +399,21 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor craftable
+            && !string.IsNullOrEmpty(ContentFolder) && craftable.Item.BigCraftable && craftable.Item.ParentSheetIndex is int craftableIndex
+            && BigCraftableSprites.TryGetSprite(ContentFolder, craftableIndex, out var craftableBitmap, out var craftableSource))
+        {
+            // Bottom-anchored like trees/stumps - a bigCraftable's sprite is always taller
+            // (2 tiles) than its 1-tile footprint (BigCraftableSprites remarks).
+            var pixelsPerSourcePixel = scale / 16.0;
+            var cw = craftableSource.Width * pixelsPerSourcePixel;
+            var ch = craftableSource.Height * pixelsPerSourcePixel;
+            var cx = pixelOffsetX + entity.Position.X * scale + scale / 2 - cw / 2;
+            var cy = pixelOffsetY + entity.Position.Y * scale + scale - ch;
+            context.DrawImage(craftableBitmap, craftableSource, new Rect(cx, cy, cw, ch));
+            return;
+        }
+
         if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor placed
             && !string.IsNullOrEmpty(ContentFolder) && placed.Item.ParentSheetIndex is int index
             && ObjectSprites.TryGetSprite(ContentFolder, index, out var objBitmap, out var objSource))
@@ -426,10 +486,26 @@ public sealed class FarmMapControl : Control
     /// place beats an accurate-stage square marker. Returns false (caller falls back to the
     /// marker) for tree types we haven't mapped to a real sprite sheet.
     /// </summary>
+    /// <summary>A tree is a two-part sprite (canopy on top of a trunk) when standing, or just
+    /// the stump alone once chopped (tree.Stump) - never both, and never the full tree while
+    /// stumped. See TreeSprites.TryGetStumpSprite for where the stump rect comes from.</summary>
     private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale)
     {
-        var variant = (position.X * 3 + position.Y * 7) % 2;
-        if (!TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, variant, out var bitmap, out var source))
+        bool found;
+        Bitmap bitmap;
+        Rect source;
+
+        if (tree.Stump)
+        {
+            found = TreeSprites.TryGetStumpSprite(ContentFolder!, tree.TreeType, Season, out bitmap, out source);
+        }
+        else
+        {
+            var variant = (position.X * 3 + position.Y * 7) % 2;
+            found = TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, variant, out bitmap, out source);
+        }
+
+        if (!found)
             return false;
 
         var pixelsPerSourcePixel = scale / 16.0;
@@ -467,17 +543,80 @@ public sealed class FarmMapControl : Control
         return true;
     }
 
+    private TilePosition FloorTile(Point point, (double MinX, double MinY, double Scale) layout)
+        => new((int)Math.Floor(point.X / layout.Scale + layout.MinX), (int)Math.Floor(point.Y / layout.Scale + layout.MinY));
+
+    /// <summary>Resolution is deferred to release (see OnPointerReleased) so a click can turn
+    /// into a drag - this just records where the gesture started and captures the pointer so
+    /// drags that leave the control's bounds are still tracked.</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
 
+        if (_lastLayout is not { } layout)
+            return;
+
+        var tile = FloorTile(e.GetPosition(this), layout);
+        ClickedTile = tile;
+        _dragStartTile = tile;
+        _dragCurrentTile = tile;
+        _isDragging = false;
+        e.Pointer.Capture(this);
+    }
+
+    /// <summary>Crossing tile boundaries while the button is held is what turns a click into a
+    /// drag - a plain click never triggers this (press and release land in the same tile).</summary>
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+
+        if (_dragStartTile is not { } start || _lastLayout is not { } layout)
+            return;
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            return;
+
+        var tile = FloorTile(e.GetPosition(this), layout);
+        if (!_isDragging && tile != start)
+            _isDragging = true;
+
+        if (!_isDragging)
+            return;
+
+        _dragCurrentTile = tile;
+        InvalidateVisual(); // redraw the live marquee rectangle
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        e.Pointer.Capture(null);
+
+        if (_dragStartTile is not { } start)
+            return;
+
+        if (_isDragging && _dragCurrentTile is { } end)
+            ResolveRangeSelection(start, end);
+        else
+            ResolveSingleClick(e.GetPosition(this));
+
+        _dragStartTile = null;
+        _dragCurrentTile = null;
+        _isDragging = false;
+        InvalidateVisual();
+    }
+
+    /// <summary>Exactly today's single-click behavior (nearest-entity hit test, falling back
+    /// to a tile-info dump) - recomputed from the release position rather than the original
+    /// press position, but for a non-drag click those are the same tile anyway.</summary>
+    private void ResolveSingleClick(Point releasePosition)
+    {
+        SelectedRange = Array.Empty<MapEntitySummary>();
+
         if (_lastLayout is not { } layout || Entities is null)
             return;
 
-        var point = e.GetPosition(this);
-        var tileX = point.X / layout.Scale + layout.MinX;
-        var tileY = point.Y / layout.Scale + layout.MinY;
-        ClickedTile = new TilePosition((int)Math.Floor(tileX), (int)Math.Floor(tileY));
+        var tileX = releasePosition.X / layout.Scale + layout.MinX;
+        var tileY = releasePosition.Y / layout.Scale + layout.MinY;
 
         // Distance to the nearest point of the entity's footprint, not just its top-left tile -
         // otherwise a multi-tile building is only clickable right at one corner.
@@ -503,6 +642,31 @@ public sealed class FarmMapControl : Control
         // Nothing dynamic there - report the base map's tile(s), if we have real tile art loaded.
         Selected = null;
         SelectedTileInfo = _map is null ? null : DescribeTile((int)Math.Floor(tileX), (int)Math.Floor(tileY));
+    }
+
+    /// <summary>Every entity whose footprint intersects the dragged tile rectangle (inclusive,
+    /// in either drag direction) becomes the new SelectedRange; clears the single Selected -
+    /// the two are mutually exclusive views in the side panel.</summary>
+    private void ResolveRangeSelection(TilePosition start, TilePosition end)
+    {
+        Selected = null;
+        SelectedTileInfo = null;
+
+        if (Entities is null)
+        {
+            SelectedRange = Array.Empty<MapEntitySummary>();
+            return;
+        }
+
+        var minX = Math.Min(start.X, end.X);
+        var maxX = Math.Max(start.X, end.X);
+        var minY = Math.Min(start.Y, end.Y);
+        var maxY = Math.Max(start.Y, end.Y);
+
+        SelectedRange = Entities
+            .Where(entity => entity.Position.X + entity.Width - 1 >= minX && entity.Position.X <= maxX
+                           && entity.Position.Y + entity.Height - 1 >= minY && entity.Position.Y <= maxY)
+            .ToList();
     }
 
     private string DescribeTile(int x, int y)

@@ -30,8 +30,11 @@ public partial class ItemRowViewModel : ViewModelBase
     /// the field's declared type (standard XmlSerializer polymorphism) - a plain Object omits
     /// it entirely when placed on the farm (declared type is already Object) but gets an
     /// explicit xsi:type="Object" when carried in inventory (declared type there is the base
-    /// Item), so both need treating as "plain object", not just an exact "Object" match.</summary>
-    private bool IsPlainObject => Item.ItemType is "" or "Object";
+    /// Item), so both need treating as "plain object", not just an exact "Object" match.
+    /// BigCraftables (Furnace, Grandfather Clock, ...) are the same xsi:type as a plain
+    /// Object - only the bigCraftable flag differs - but live in a totally separate id space
+    /// (Data/BigCraftables.json), so they need excluding here the same way Chest did.</summary>
+    private bool IsPlainObject => (Item.ItemType is "" or "Object") && !Item.BigCraftable;
 
     public bool HasQuality => Item.HasQuality && IsPlainObject && ItemCategories.SupportsQuality(Item.ParentSheetIndex);
 

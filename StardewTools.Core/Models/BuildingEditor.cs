@@ -4,13 +4,12 @@ using StardewTools.Core.Serialization;
 namespace StardewTools.Core.Models;
 
 /// <summary>
-/// A player-constructed building (barn, coop, shed, ...). Unverified against real data -
-/// this project's reference save has never had one built, so there was no real
-/// &lt;buildings&gt; data to confirm field names against. Field names here (buildingType,
-/// tileX/tileY, tilesWide/tilesHigh) come from general, long-stable Stardew modding
-/// knowledge, not something we've cross-checked the way everything else in Core has been.
-/// Parsing is defensive (missing fields default rather than throw) so an unexpected shape
-/// degrades gracefully instead of crashing the whole Map tab.
+/// A player-constructed building (barn, coop, shed, ...). Field names (buildingType, tileX/
+/// tileY, tilesWide/tilesHigh) are now confirmed against the decompiled Building.cs's
+/// [XmlElement] attributes, not just modding knowledge - but still not against a live save's
+/// actual &lt;buildings&gt; data, since none of the saves available while building this ever
+/// had one constructed. Parsing stays defensive (missing fields default rather than throw) so
+/// an unexpected shape degrades gracefully instead of crashing the whole Map tab.
 /// </summary>
 public sealed class BuildingEditor
 {

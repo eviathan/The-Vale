@@ -55,4 +55,46 @@ public sealed class PlayerEditor
         get => _element.GetChildInt("houseUpgradeLevel");
         set => _element.SetChildInt("houseUpgradeLevel", value);
     }
+
+    /// <summary>0-10 for each skill. Confirmed against the decompiled Farmer.cs: the level
+    /// fields (farmingLevel etc.) are the real, directly-persisted, authoritative values - not
+    /// recomputed from experiencePoints on load - so setting one alone is safe. Each setter
+    /// here also updates the matching experiencePoints slot to getBaseExperienceForLevel(level)
+    /// (the exact thresholds table from Farmer.cs, and the same thing the game's own debug/
+    /// cheat level-set command does at Farmer.cs:7112-7116), so further in-game XP gains behave
+    /// sensibly instead of the two fields silently disagreeing.</summary>
+    public int FarmingLevel { get => GetLevel("farmingLevel"); set => SetLevel("farmingLevel", 0, value); }
+    public int FishingLevel { get => GetLevel("fishingLevel"); set => SetLevel("fishingLevel", 1, value); }
+    public int ForagingLevel { get => GetLevel("foragingLevel"); set => SetLevel("foragingLevel", 2, value); }
+    public int MiningLevel { get => GetLevel("miningLevel"); set => SetLevel("miningLevel", 3, value); }
+    public int CombatLevel { get => GetLevel("combatLevel"); set => SetLevel("combatLevel", 4, value); }
+    public int LuckLevel { get => GetLevel("luckLevel"); set => SetLevel("luckLevel", 5, value); }
+
+    private int GetLevel(string field) => _element.GetChildInt(field);
+
+    private void SetLevel(string field, int experienceSlot, int level)
+    {
+        _element.SetChildInt(field, level);
+
+        var experiencePoints = _element.Element("experiencePoints");
+        var slot = experiencePoints?.Elements("int").ElementAtOrDefault(experienceSlot);
+        if (slot is not null)
+            slot.Value = BaseExperienceForLevel(level).ToString();
+    }
+
+    /// <summary>Exact XP thresholds from the decompiled Farmer.getBaseExperienceForLevel.</summary>
+    private static int BaseExperienceForLevel(int level) => level switch
+    {
+        1 => 100,
+        2 => 380,
+        3 => 770,
+        4 => 1300,
+        5 => 2150,
+        6 => 3300,
+        7 => 4800,
+        8 => 6900,
+        9 => 10000,
+        10 => 15000,
+        _ => 0,
+    };
 }

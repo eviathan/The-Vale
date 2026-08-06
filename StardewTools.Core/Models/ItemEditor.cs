@@ -48,5 +48,11 @@ public sealed class ItemEditor
     /// <summary>Sprite sheet index for this item's icon (confirmed real field, e.g. Weeds = 784). Null if absent.</summary>
     public int? ParentSheetIndex => _element.TryGetChildInt("parentSheetIndex") ?? _element.TryGetChildInt("ParentSheetIndex");
 
+    /// <summary>Machines/decorations (Furnace, Grandfather Clock, ...) vs a plain Object -
+    /// same underlying element shape either way (Object.cs), just a different ParentSheetIndex
+    /// space (Data/BigCraftables.json instead of Data/Objects.json). Not every item type
+    /// (e.g. tools) has this field at all, so this can't use the throwing GetChildBool.</summary>
+    public bool BigCraftable => bool.TryParse(_element.Element("bigCraftable")?.Value, out var v) && v;
+
     internal XElement Element => _element;
 }

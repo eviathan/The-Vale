@@ -14,10 +14,17 @@ namespace StardewTools.SaveEditor.ViewModels;
 public partial class MapTabViewModel : ViewModelBase
 {
     private FarmMapEditor? _map;
+    private ItemListEditor? _inventory;
     private List<MapEntitySummary> _farmEntitiesCache = new();
 
     [ObservableProperty] private MapEntitySummary? _selected;
     [ObservableProperty] private MapEntityDetailsViewModel? _selectedDetails;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RemoveRangeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CollectRangeCommand))]
+    [NotifyPropertyChangedFor(nameof(HasSelectedRange))]
+    private IReadOnlyList<MapEntitySummary> _selectedRange = Array.Empty<MapEntitySummary>();
     [ObservableProperty] private string _season = "";
     [ObservableProperty] private string _summary = "";
     [ObservableProperty] private string _contentFolder = "";
@@ -32,11 +39,17 @@ public partial class MapTabViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
     private TilePosition? _clickedTile;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
+    private PlaceableBuilding? _selectedPlaceableBuilding;
 
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
     public IReadOnlyList<PlaceableItem> AvailablePlaceableItems => PlaceableItems.All;
+    public IReadOnlyList<PlaceableBuilding> AvailablePlaceableBuildings => PlaceableBuildings.All;
 
     public MapTabViewModel()
     {
@@ -98,7 +111,7 @@ public partial class MapTabViewModel : ViewModelBase
         Selected = fresh; // different reference -> AffectsRender fires -> map redraws with the edit
     }
 
-    private void RemoveEntity(MapEntitySummary entity)
+    private void RemoveFromMap(MapEntitySummary entity)
     {
         if (_map is null)
             return;
@@ -112,10 +125,54 @@ public partial class MapTabViewModel : ViewModelBase
             case PlacedObjectEditor obj: _map.Remove(obj); break;
             case BuildingEditor building: _map.Remove(building); break;
         }
+    }
 
+    private void RemoveEntity(MapEntitySummary entity)
+    {
+        RemoveFromMap(entity);
         Entities.Remove(entity);
         _farmEntitiesCache.Remove(entity);
         Selected = null;
+    }
+
+    public bool HasSelectedRange => SelectedRange.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(HasSelectedRange))]
+    private void RemoveRange()
+    {
+        foreach (var entity in SelectedRange.ToList())
+        {
+            RemoveFromMap(entity);
+            Entities.Remove(entity);
+            _farmEntitiesCache.Remove(entity);
+        }
+
+        SelectedRange = Array.Empty<MapEntitySummary>();
+    }
+
+    /// <summary>Removes every entity in the range and deposits its real yield (EntityYields -
+    /// a placed Object's "yield" is just itself) into the player's inventory first.</summary>
+    [RelayCommand(CanExecute = nameof(HasSelectedRange))]
+    private void CollectRange()
+    {
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (_inventory is not null)
+            {
+                foreach (var (index, stack) in EntityYields.Resolve(entity))
+                {
+                    var meta = PlaceableItems.All.FirstOrDefault(i => i.Index == index && !i.IsBigCraftable);
+                    if (meta is not null)
+                        _inventory.AddNew(meta.Index, meta.Name, meta.Price, meta.Edibility, meta.Category, meta.Type, stack);
+                }
+            }
+
+            RemoveFromMap(entity);
+            Entities.Remove(entity);
+            _farmEntitiesCache.Remove(entity);
+        }
+
+        SelectedRange = Array.Empty<MapEntitySummary>();
     }
 
     partial void OnSelectedLocationNameChanged(string value)
@@ -133,9 +190,11 @@ public partial class MapTabViewModel : ViewModelBase
     public void Bind(SaveGameEditor save)
     {
         _map = save.Map;
+        _inventory = save.Player.Inventory;
         Season = save.Season;
         HouseUpgradeLevel = save.Player.HouseUpgradeLevel;
         Selected = null;
+        SelectedRange = Array.Empty<MapEntitySummary>();
 
         AvailableLocations.Clear();
         foreach (var name in save.LocationNames.OrderBy(n => n))
@@ -174,8 +233,26 @@ public partial class MapTabViewModel : ViewModelBase
         if (_map is null || SelectedPlaceableItem is not { } item || ClickedTile is not { } tile)
             return;
 
-        var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type);
+        var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
         var summary = MapEntitySummary.FromObject(placed);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
+    private bool CanPlaceBuilding() => _map is not null && SelectedPlaceableBuilding is not null && ClickedTile is not null && SelectedLocationName == "Farm";
+
+    /// <summary>Places SelectedPlaceableBuilding at ClickedTile - see PlaceableBuildings for
+    /// why this is limited to buildings with no interior (Gold Clock, Obelisks, Well, Silo,
+    /// Mill, ...); Barn/Coop/etc. need their interior location verified first.</summary>
+    [RelayCommand(CanExecute = nameof(CanPlaceBuilding))]
+    private void PlaceBuilding()
+    {
+        if (_map is null || SelectedPlaceableBuilding is not { } building || ClickedTile is not { } tile)
+            return;
+
+        var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical);
+        var summary = MapEntitySummary.FromBuilding(placed);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
         Selected = summary;

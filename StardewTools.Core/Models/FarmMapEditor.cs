@@ -68,15 +68,20 @@ public sealed class FarmMapEditor
             .ToList();
 
     /// <summary>
-    /// Places a new plain Object on the farm at the given tile. The element shape (every
-    /// field, in this order) is copied from a real placed Object in an actual save, not
-    /// invented - the only per-item fields are name/parentSheetIndex/price/edibility/type/
-    /// category, which should come from real Data/Objects.json data (see PlaceableItems),
-    /// not the save's own &lt;type&gt;/&lt;category&gt; values - those turned out to already
-    /// be corrupted with placeholder junk ("asdf" as a type, wrong category) in a real save
-    /// this was verified against, apparently from some earlier, unrelated tool.
+    /// Places a new plain Object - or, when <paramref name="bigCraftable"/> is true, a
+    /// machine/decoration like a Furnace or Grandfather Clock - on the farm at the given tile.
+    /// Both are the exact same underlying save shape (confirmed in the decompiled Object.cs:
+    /// bigCraftable is just a NetBool field on Object, no special xsi:type or element shape),
+    /// only the index space differs (Data/BigCraftables.json instead of Data/Objects.json -
+    /// see PlaceableItems). The element shape (every field, in this order) is copied from a
+    /// real placed Object in an actual save, not invented - the only per-item fields are
+    /// name/parentSheetIndex/price/edibility/type/category, which should come from real
+    /// Data/Objects.json or Data/BigCraftables.json data, not the save's own &lt;type&gt;/
+    /// &lt;category&gt; values - those turned out to already be corrupted with placeholder
+    /// junk ("asdf" as a type, wrong category) in a real save this was verified against,
+    /// apparently from some earlier, unrelated tool.
     /// </summary>
-    public PlacedObjectEditor AddObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type)
+    public PlacedObjectEditor AddObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type, bool bigCraftable = false)
     {
         var container = _farmLocation.Element("objects");
         if (container is null)
@@ -85,53 +90,7 @@ public sealed class FarmMapEditor
             _farmLocation.Add(container);
         }
 
-        var boundsX = position.X * 64;
-        var boundsY = position.Y * 64;
-
-        var value = new XElement("Object",
-            new XElement("isLostItem", false),
-            new XElement("category", category),
-            new XElement("hasBeenInInventory", false),
-            new XElement("name", name),
-            new XElement("parentSheetIndex", parentSheetIndex),
-            new XElement("specialItem", false),
-            new XElement("SpecialVariable", 0),
-            new XElement("DisplayName", name),
-            new XElement("Name", name),
-            new XElement("Stack", 1),
-            new XElement("tileLocation", new XElement("X", position.X), new XElement("Y", position.Y)),
-            new XElement("owner", 0),
-            new XElement("type", type),
-            new XElement("canBeSetDown", true),
-            new XElement("canBeGrabbed", true),
-            new XElement("isHoedirt", false),
-            new XElement("isSpawnedObject", false),
-            new XElement("questItem", false),
-            new XElement("questId", 0),
-            new XElement("isOn", true),
-            new XElement("fragility", 0),
-            new XElement("price", price),
-            new XElement("edibility", edibility),
-            new XElement("stack", 1),
-            new XElement("quality", 0),
-            new XElement("bigCraftable", false),
-            new XElement("setOutdoors", false),
-            new XElement("setIndoors", false),
-            new XElement("readyForHarvest", false),
-            new XElement("showNextIndex", false),
-            new XElement("flipped", false),
-            new XElement("hasBeenPickedUpByFarmer", false),
-            new XElement("isRecipe", false),
-            new XElement("isLamp", false),
-            new XElement("minutesUntilReady", 1),
-            new XElement("boundingBox",
-                new XElement("X", boundsX), new XElement("Y", boundsY),
-                new XElement("Width", 64), new XElement("Height", 64),
-                new XElement("Location", new XElement("X", boundsX), new XElement("Y", boundsY)),
-                new XElement("Size", new XElement("X", 64), new XElement("Y", 64))),
-            new XElement("scale", new XElement("X", 0), new XElement("Y", 0)),
-            new XElement("uses", 0),
-            new XElement("preservedParentSheetIndex", 0));
+        var value = new XElement("Object", ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable, 1, position.X, position.Y));
 
         var item = new XElement("item",
             new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
@@ -139,6 +98,50 @@ public sealed class FarmMapEditor
 
         container.Add(item);
         return new PlacedObjectEditor(position, value);
+    }
+
+    /// <summary>
+    /// Places a new building at the given tile - deliberately limited to buildings that have
+    /// no interior (Gold Clock, the 4 Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable,
+    /// Shipping Bin - confirmed via Data/Buildings.json: these all have IndoorMap/
+    /// NonInstancedIndoorLocation both null and HumanDoor (-1,-1), i.e. no door, no interior
+    /// to wire up). Buildings with a real interior (Barn, Coop, ...) need that interior
+    /// location linked correctly, which isn't verified here yet - see PlaceableBuildings in
+    /// the app layer for the actual safe list. Field order/shape confirmed against the
+    /// decompiled Building.cs's [XmlElement] attributes (no real placed-building save data
+    /// was available to verify against directly).
+    /// </summary>
+    public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical)
+    {
+        var container = _farmLocation.Element("buildings");
+        if (container is null)
+        {
+            container = new XElement("buildings");
+            _farmLocation.Add(container);
+        }
+
+        var element = new XElement("Building",
+            new XElement("id", Guid.NewGuid().ToString()),
+            new XElement("tileX", position.X),
+            new XElement("tileY", position.Y),
+            new XElement("tilesWide", tilesWide),
+            new XElement("tilesHigh", tilesHigh),
+            new XElement("maxOccupants", -1),
+            new XElement("currentOccupants", 0),
+            new XElement("daysOfConstructionLeft", 0),
+            new XElement("daysUntilUpgrade", 0),
+            new XElement("buildingType", buildingType),
+            new XElement("humanDoor", new XElement("X", -1), new XElement("Y", -1)),
+            new XElement("animalDoor", new XElement("X", -1), new XElement("Y", -1)),
+            new XElement("animalDoorOpen", false),
+            new XElement("animalDoorOpenAmount", 0),
+            new XElement("magical", magical),
+            new XElement("fadeWhenPlayerIsBehind", true),
+            new XElement("owner", 0),
+            new XElement("newConstructionTimer", 0));
+
+        container.Add(element);
+        return new BuildingEditor(element);
     }
 
     public void Remove(TreeEditor tree) => tree.Item.Remove();
