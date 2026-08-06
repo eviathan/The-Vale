@@ -151,6 +151,13 @@ public sealed class FarmMapEditor
     public void Remove(PlacedObjectEditor placedObject) => placedObject.WrappingItem.Remove();
     public void Remove(BuildingEditor building) => building.Element.Remove();
 
+    public void Move(TreeEditor tree, TilePosition newPosition) => tree.Move(newPosition);
+    public void Move(GrassEditor grass, TilePosition newPosition) => grass.Move(newPosition);
+    public void Move(HoeDirtEditor dirt, TilePosition newPosition) => dirt.Move(newPosition);
+    public void Move(ResourceClumpEditor clump, TilePosition newPosition) => clump.Move(newPosition);
+    public void Move(PlacedObjectEditor placedObject, TilePosition newPosition) => placedObject.Move(newPosition);
+    public void Move(BuildingEditor building, TilePosition newPosition) => building.Move(newPosition);
+
     /// <summary>
     /// Walks a `&lt;name&gt;&lt;item&gt;&lt;key&gt;&lt;Vector2&gt;X/Y&lt;/Vector2&gt;&lt;/key&gt;
     /// &lt;value&gt;{single child}&lt;/value&gt;&lt;/item&gt;...&lt;/name&gt;` tile dictionary,

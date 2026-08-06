@@ -21,12 +21,21 @@ public sealed class BuildingEditor
         Position = new TilePosition(_element.TryGetChildInt("tileX") ?? 0, _element.TryGetChildInt("tileY") ?? 0);
     }
 
-    public TilePosition Position { get; }
+    public TilePosition Position { get; private set; }
 
     public string BuildingType => _element.Element("buildingType")?.Value ?? "Unknown";
 
     public int Width => _element.TryGetChildInt("tilesWide") ?? 1;
     public int Height => _element.TryGetChildInt("tilesHigh") ?? 1;
+
+    /// <summary>A building's position is its own tileX/tileY fields (flat list, not a tile
+    /// dictionary) - moving it is a direct field edit.</summary>
+    public void Move(TilePosition newPosition)
+    {
+        _element.SetChildInt("tileX", newPosition.X);
+        _element.SetChildInt("tileY", newPosition.Y);
+        Position = newPosition;
+    }
 
     internal XElement Element => _element;
 }

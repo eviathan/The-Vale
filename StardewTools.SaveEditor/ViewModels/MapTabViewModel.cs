@@ -15,8 +15,15 @@ public enum PlacementTool { None, Object, Building }
 
 /// <summary>A placement that's blocked by existing entities - Confirm removes them and places;
 /// Cancel just drops this. Blocking is captured up front (at click time), not re-derived at
-/// confirm time, so the confirmation panel's list can't drift from what Confirm will actually do.</summary>
+/// confirm time, so the confirmation panel's list can't drift from what Confirm will actually do.
+/// Shared by both new-item placement (the draw tools) and dragging an existing entity to an
+/// occupied tile - Label is written to read sensibly for either ("Place X" / "Move Y to (a,b)").</summary>
 public sealed record PendingPlacement(string Label, IReadOnlyList<MapEntitySummary> Blocking, Action Confirm);
+
+/// <summary>Fired by FarmMapControl once a click-and-drag that started on an existing entity
+/// finishes - see FarmMapControl's move-drag handling. A drag starting on empty space is a
+/// marquee range-select instead (SelectedRange), never this.</summary>
+public sealed record EntityMoveRequest(MapEntitySummary Entity, TilePosition NewPosition);
 
 public partial class MapTabViewModel : ViewModelBase
 {
@@ -52,6 +59,10 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
     private PlaceableBuilding? _selectedPlaceableBuilding;
+
+    /// <summary>Set by FarmMapControl (OneWayToSource) once a drag that started on an existing
+    /// entity finishes - see OnMoveRequestChanged.</summary>
+    [ObservableProperty] private EntityMoveRequest? _moveRequest;
 
     [ObservableProperty] private PlacementTool _placementTool = PlacementTool.None;
 
@@ -323,17 +334,77 @@ public partial class MapTabViewModel : ViewModelBase
         switch (PlacementTool)
         {
             case PlacementTool.Object when SelectedPlaceableItem is { } item:
-                TryPlaceOrConfirm(tile, 1, 1, item.ToString(), () => PlaceObjectAt(tile, item));
+                TryPlaceOrConfirm(tile, 1, 1, $"Place {item}", () => PlaceObjectAt(tile, item));
                 break;
             case PlacementTool.Building when SelectedPlaceableBuilding is { } building:
-                TryPlaceOrConfirm(tile, building.TilesWide, building.TilesHigh, building.ToString(), () => PlaceBuildingAt(tile, building));
+                TryPlaceOrConfirm(tile, building.TilesWide, building.TilesHigh, $"Place {building}", () => PlaceBuildingAt(tile, building));
                 break;
         }
     }
 
-    private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place)
+    /// <summary>Dragging an existing entity to a new tile - see FarmMapControl's move-drag
+    /// handling (a drag starting on empty space is a marquee range-select instead, never this).
+    /// Goes through the same TryPlaceOrConfirm staging as a brand-new placement, just excluding
+    /// the entity being moved from its own "am I blocked" check.</summary>
+    partial void OnMoveRequestChanged(EntityMoveRequest? value)
+    {
+        if (value is not { } request || _map is null)
+            return;
+
+        var (entity, newPosition) = (request.Entity, request.NewPosition);
+        TryPlaceOrConfirm(newPosition, entity.Width, entity.Height, $"Move {entity.Label} to ({newPosition.X}, {newPosition.Y})",
+            () => MoveEntityTo(entity, newPosition), exclude: entity);
+    }
+
+    private void MoveEntityTo(MapEntitySummary entity, TilePosition newPosition)
+    {
+        if (_map is null)
+            return;
+
+        switch (entity.Source)
+        {
+            case TreeEditor tree: _map.Move(tree, newPosition); break;
+            case GrassEditor grass: _map.Move(grass, newPosition); break;
+            case HoeDirtEditor dirt: _map.Move(dirt, newPosition); break;
+            case ResourceClumpEditor clump: _map.Move(clump, newPosition); break;
+            case PlacedObjectEditor obj: _map.Move(obj, newPosition); break;
+            case BuildingEditor building: _map.Move(building, newPosition); break;
+            default: return;
+        }
+
+        // Position is init-only on MapEntitySummary (like every other edit in this file) - the
+        // underlying Source editor is the SAME instance (Move updates it in place), only the
+        // summary wrapper needs rebuilding so Entities/Selected/SelectedRange pick up the change.
+        var fresh = ResummarizeSource(entity.Source);
+
+        var idx = Entities.IndexOf(entity);
+        if (idx >= 0) Entities[idx] = fresh;
+
+        var cacheIdx = _farmEntitiesCache.IndexOf(entity);
+        if (cacheIdx >= 0) _farmEntitiesCache[cacheIdx] = fresh;
+
+        if (SelectedRange.Contains(entity))
+            SelectedRange = SelectedRange.Select(e => ReferenceEquals(e, entity) ? fresh : e).ToList();
+
+        if (ReferenceEquals(Selected, entity))
+            Selected = fresh;
+    }
+
+    private static MapEntitySummary ResummarizeSource(object source) => source switch
+    {
+        TreeEditor t => MapEntitySummary.FromTree(t),
+        GrassEditor g => MapEntitySummary.FromGrass(g),
+        HoeDirtEditor d => MapEntitySummary.FromHoeDirt(d),
+        ResourceClumpEditor c => MapEntitySummary.FromClump(c),
+        PlacedObjectEditor o => MapEntitySummary.FromObject(o),
+        BuildingEditor b => MapEntitySummary.FromBuilding(b),
+        _ => throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}."),
+    };
+
+    private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place, MapEntitySummary? exclude = null)
     {
         var blocking = Entities
+            .Where(e => !ReferenceEquals(e, exclude))
             .Where(e => e.Position.X + e.Width - 1 >= tile.X && e.Position.X <= tile.X + width - 1
                      && e.Position.Y + e.Height - 1 >= tile.Y && e.Position.Y <= tile.Y + height - 1)
             .ToList();

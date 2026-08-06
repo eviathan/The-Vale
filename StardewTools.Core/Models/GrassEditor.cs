@@ -14,7 +14,19 @@ public sealed class GrassEditor
         _feature = featureElement;
     }
 
-    public TilePosition Position { get; }
+    public TilePosition Position { get; private set; }
+
+    /// <summary>See TreeEditor.Move - same terrainFeatures dictionary, same key-is-the-position shape.</summary>
+    public void Move(TilePosition newPosition)
+    {
+        if (Item.Element("key")?.Element("Vector2") is { } vector)
+        {
+            vector.SetChildInt("X", newPosition.X);
+            vector.SetChildInt("Y", newPosition.Y);
+        }
+
+        Position = newPosition;
+    }
 
     public int GrassType
     {

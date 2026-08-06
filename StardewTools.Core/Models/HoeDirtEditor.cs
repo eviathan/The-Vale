@@ -17,7 +17,19 @@ public sealed class HoeDirtEditor
         _feature = featureElement;
     }
 
-    public TilePosition Position { get; }
+    public TilePosition Position { get; private set; }
+
+    /// <summary>See TreeEditor.Move - same terrainFeatures dictionary, same key-is-the-position shape.</summary>
+    public void Move(TilePosition newPosition)
+    {
+        if (Item.Element("key")?.Element("Vector2") is { } vector)
+        {
+            vector.SetChildInt("X", newPosition.X);
+            vector.SetChildInt("Y", newPosition.Y);
+        }
+
+        Position = newPosition;
+    }
 
     /// <summary>0 = dry, 1 = watered, 2 = paddy crop (general modding knowledge - same
     /// confidence tier as TreeEditor.TreeType's species mapping, not save-verified per value).</summary>

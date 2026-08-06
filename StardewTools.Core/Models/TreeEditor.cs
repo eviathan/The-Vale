@@ -14,7 +14,21 @@ public sealed class TreeEditor
         _feature = featureElement;
     }
 
-    public TilePosition Position { get; }
+    public TilePosition Position { get; private set; }
+
+    /// <summary>Trees live in the terrainFeatures tile dictionary keyed by position - moving
+    /// one means rewriting its &lt;key&gt;&lt;Vector2&gt; rather than any field on the tree
+    /// itself (there isn't one; the key IS the position).</summary>
+    public void Move(TilePosition newPosition)
+    {
+        if (Item.Element("key")?.Element("Vector2") is { } vector)
+        {
+            vector.SetChildInt("X", newPosition.X);
+            vector.SetChildInt("Y", newPosition.Y);
+        }
+
+        Position = newPosition;
+    }
 
     /// <summary>0-4: seed/sprout/sapling/bush/adult.</summary>
     public int GrowthStage

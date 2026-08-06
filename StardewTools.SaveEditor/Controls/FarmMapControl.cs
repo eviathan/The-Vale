@@ -56,6 +56,12 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<IReadOnlyList<MapEntitySummary>> SelectedRangeProperty =
         AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<MapEntitySummary>>(nameof(SelectedRange), Array.Empty<MapEntitySummary>(), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
 
+    /// <summary>Fired once when a click-and-drag that started on an existing entity finishes -
+    /// see OnPointerPressed/OnPointerReleased. A drag starting on empty space marquees instead
+    /// (SelectedRange) and never touches this.</summary>
+    public static readonly StyledProperty<EntityMoveRequest?> MoveRequestProperty =
+        AvaloniaProperty.Register<FarmMapControl, EntityMoveRequest?>(nameof(MoveRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
     /// <summary>Whether a draw tool (Object/Building) is armed in the side panel. When true, a
     /// click-and-drag paints one placement per tile crossed instead of the normal marquee
     /// range-select - see OnPointerMoved.</summary>
@@ -162,6 +168,12 @@ public sealed class FarmMapControl : Control
         set => SetValue(IsPlacementToolActiveProperty, value);
     }
 
+    public EntityMoveRequest? MoveRequest
+    {
+        get => GetValue(MoveRequestProperty);
+        private set => SetValue(MoveRequestProperty, value);
+    }
+
     public double Zoom
     {
         get => GetValue(ZoomProperty);
@@ -213,6 +225,9 @@ public sealed class FarmMapControl : Control
     private TilePosition? _dragStartTile;
     private TilePosition? _dragCurrentTile;
     private bool _isDragging;
+    private MapEntitySummary? _dragEntity; // non-null => this drag (once it becomes one) moves this entity instead of marqueeing
+    private int _dragGrabOffsetX;
+    private int _dragGrabOffsetY;
     private bool _isPainting;
     private TilePosition? _lastPaintedTile;
     private bool _needsViewCentering;
@@ -283,14 +298,16 @@ public sealed class FarmMapControl : Control
             RenderAbstract(context);
 
         DrawMarquee(context);
+        DrawMoveGhost(context);
     }
 
     /// <summary>The live rectangle overlay while a drag-select is in progress - drawn after
     /// either render path so it works the same in real-map and abstract-view modes, since
-    /// both populate _lastLayout the same way.</summary>
+    /// both populate _lastLayout the same way. Never shown for an entity-move drag (see
+    /// DrawMoveGhost) - the two are mutually exclusive outcomes of the same drag gesture.</summary>
     private void DrawMarquee(DrawingContext context)
     {
-        if (!_isDragging || _lastLayout is not { } layout || _dragStartTile is not { } start || _dragCurrentTile is not { } current)
+        if (_dragEntity is not null || !_isDragging || _lastLayout is not { } layout || _dragStartTile is not { } start || _dragCurrentTile is not { } current)
             return;
 
         var minX = Math.Min(start.X, current.X);
@@ -306,6 +323,45 @@ public sealed class FarmMapControl : Control
 
         context.FillRectangle(new SolidColorBrush(Color.Parse("#503B82F6")), rect);
         context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#3B82F6")), 2), rect);
+    }
+
+    /// <summary>Translucent preview of a dragged entity at its would-land tile, following the
+    /// cursor - the original stays drawn normally at its current (not-yet-moved) position via
+    /// the regular entity loop, so a drag shows both "where it is" and "where it'll go" like a
+    /// normal drag-and-drop. _dragGrabOffsetX/Y (captured at press time) keeps the entity's
+    /// footprint anchored under wherever it was actually grabbed, not snapped so its top-left
+    /// tile jumps to the cursor.</summary>
+    private void DrawMoveGhost(DrawingContext context)
+    {
+        if (_dragEntity is not { } entity || !_isDragging || _lastLayout is not { } layout || _dragCurrentTile is not { } current)
+            return;
+
+        var target = ClampFootprint(new TilePosition(current.X - _dragGrabOffsetX, current.Y - _dragGrabOffsetY), entity.Width, entity.Height);
+
+        var ghost = new MapEntitySummary
+        {
+            Position = target,
+            Kind = entity.Kind,
+            Label = entity.Label,
+            ColorHex = entity.ColorHex,
+            Source = entity.Source,
+            Width = entity.Width,
+            Height = entity.Height,
+        };
+
+        var pixelOffsetX = -layout.MinX * layout.Scale;
+        var pixelOffsetY = -layout.MinY * layout.Scale;
+        DrawSingleEntity(context, ghost, pixelOffsetX, pixelOffsetY, layout.Scale, opacity: 0.55);
+    }
+
+    private TilePosition ClampFootprint(TilePosition position, int width, int height)
+    {
+        if (_map is null)
+            return position;
+
+        var x = Math.Clamp(position.X, 0, Math.Max(0, _map.Width - width));
+        var y = Math.Clamp(position.Y, 0, Math.Max(0, _map.Height - height));
+        return new TilePosition(x, y);
     }
 
     private void RenderRealMap(DrawingContext context, TmxMap map, MapAssetLoader loader)
@@ -727,6 +783,18 @@ public sealed class FarmMapControl : Control
         _dragStartTile = tile;
         _dragCurrentTile = tile;
         _isDragging = false;
+
+        // Whether THIS drag (if it turns into one) moves an entity or marquee-selects is
+        // decided right here, from what's under the initial press - not re-evaluated as the
+        // drag continues. Pressing on empty space always marquees even if the drag later
+        // crosses over an entity; pressing on an entity always (potentially) moves it.
+        _dragEntity = FindEntityAt(e.GetPosition(this), layout);
+        if (_dragEntity is { } entity)
+        {
+            _dragGrabOffsetX = tile.X - entity.Position.X;
+            _dragGrabOffsetY = tile.Y - entity.Position.Y;
+        }
+
         e.Pointer.Capture(this);
     }
 
@@ -800,12 +868,26 @@ public sealed class FarmMapControl : Control
             return;
 
         if (_isDragging && _dragCurrentTile is { } end)
-            ResolveRangeSelection(start, end);
+        {
+            if (_dragEntity is { } entity)
+            {
+                var target = ClampFootprint(new TilePosition(end.X - _dragGrabOffsetX, end.Y - _dragGrabOffsetY), entity.Width, entity.Height);
+                if (target != entity.Position)
+                    MoveRequest = new EntityMoveRequest(entity, target);
+            }
+            else
+            {
+                ResolveRangeSelection(start, end);
+            }
+        }
         else
+        {
             ResolveSingleClick(e.GetPosition(this));
+        }
 
         _dragStartTile = null;
         _dragCurrentTile = null;
+        _dragEntity = null;
         _isDragging = false;
         InvalidateVisual();
     }
@@ -876,21 +958,18 @@ public sealed class FarmMapControl : Control
             _spaceHeld = false;
     }
 
-    /// <summary>Exactly today's single-click behavior (nearest-entity hit test, falling back
-    /// to a tile-info dump) - recomputed from the release position rather than the original
-    /// press position, but for a non-drag click those are the same tile anyway.</summary>
-    private void ResolveSingleClick(Point releasePosition)
+    /// <summary>Nearest entity to a screen point, within one tile of its footprint - not just
+    /// its top-left tile, so a multi-tile building/clump is clickable (and grabbable for a
+    /// move-drag) anywhere over it, not only right at one corner. Shared by OnPointerPressed
+    /// (deciding move-drag vs marquee-drag) and ResolveSingleClick (plain-click selection).</summary>
+    private MapEntitySummary? FindEntityAt(Point screenPosition, (double MinX, double MinY, double Scale) layout)
     {
-        SelectedRange = Array.Empty<MapEntitySummary>();
+        if (Entities is null)
+            return null;
 
-        if (_lastLayout is not { } layout || Entities is null)
-            return;
+        var tileX = screenPosition.X / layout.Scale + layout.MinX;
+        var tileY = screenPosition.Y / layout.Scale + layout.MinY;
 
-        var tileX = releasePosition.X / layout.Scale + layout.MinX;
-        var tileY = releasePosition.Y / layout.Scale + layout.MinY;
-
-        // Distance to the nearest point of the entity's footprint, not just its top-left tile -
-        // otherwise a multi-tile building is only clickable right at one corner.
         double DistanceSq(MapEntitySummary entity)
         {
             var dx = Math.Max(0, Math.Max(entity.Position.X - tileX, tileX - (entity.Position.X + entity.Width - 1)));
@@ -903,15 +982,30 @@ public sealed class FarmMapControl : Control
             .OrderBy(e => e.distSq)
             .FirstOrDefault();
 
-        if (nearest.entity is not null && nearest.distSq <= 1.0)
+        return nearest.entity is not null && nearest.distSq <= 1.0 ? nearest.entity : null;
+    }
+
+    /// <summary>Exactly today's single-click behavior (nearest-entity hit test, falling back
+    /// to a tile-info dump) - recomputed from the release position rather than the original
+    /// press position, but for a non-drag click those are the same tile anyway.</summary>
+    private void ResolveSingleClick(Point releasePosition)
+    {
+        SelectedRange = Array.Empty<MapEntitySummary>();
+
+        if (_lastLayout is not { } layout)
+            return;
+
+        if (FindEntityAt(releasePosition, layout) is { } hit)
         {
-            Selected = nearest.entity;
+            Selected = hit;
             SelectedTileInfo = null;
             return;
         }
 
         // Nothing dynamic there - report the base map's tile(s), if we have real tile art loaded.
         Selected = null;
+        var tileX = releasePosition.X / layout.Scale + layout.MinX;
+        var tileY = releasePosition.Y / layout.Scale + layout.MinY;
         SelectedTileInfo = _map is null ? null : DescribeTile((int)Math.Floor(tileX), (int)Math.Floor(tileY));
     }
 

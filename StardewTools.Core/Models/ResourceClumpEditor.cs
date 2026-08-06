@@ -19,7 +19,20 @@ public sealed class ResourceClumpEditor
         Position = new TilePosition(tile.GetChildInt("X"), tile.GetChildInt("Y"));
     }
 
-    public TilePosition Position { get; }
+    public TilePosition Position { get; private set; }
+
+    /// <summary>Unlike Tree/Grass/HoeDirt, a clump's position lives on its own &lt;tile&gt;
+    /// child (flat list, not a tile dictionary) - moving it is a direct field edit.</summary>
+    public void Move(TilePosition newPosition)
+    {
+        if (_element.Element("tile") is { } tile)
+        {
+            tile.SetChildInt("X", newPosition.X);
+            tile.SetChildInt("Y", newPosition.Y);
+        }
+
+        Position = newPosition;
+    }
 
     /// <summary>Sprite index identifying stump/boulder/log variant.</summary>
     public int ParentSheetIndex
