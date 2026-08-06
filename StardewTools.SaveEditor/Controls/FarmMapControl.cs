@@ -184,12 +184,8 @@ public sealed class FarmMapControl : Control
 
         context.FillRectangle(new SolidColorBrush(Color.Parse("#1a1a1a")), new Rect(Bounds.Size));
 
-        void DrawLayerRow(string name, int y)
+        void DrawLayerRow(TmxLayer layer, int y)
         {
-            var layer = map.Layers.FirstOrDefault(l => l.Name == name);
-            if (layer is null)
-                return;
-
             for (var x = 0; x < map.Width; x++)
             {
                 var gid = layer.Tiles[y * map.Width + x];
@@ -205,19 +201,30 @@ public sealed class FarmMapControl : Control
             }
         }
 
-        void DrawLayerFull(string name)
+        void DrawLayerFull(TmxLayer layer)
         {
             for (var y = 0; y < map.Height; y++)
-                DrawLayerRow(name, y);
+                DrawLayerRow(layer, y);
         }
 
-        // Grass is already baked into the Back layer as ground texture - a marker per tile
-        // would just be noise on top of it, unlike trees/objects/clumps which aren't part of
-        // the base map at all.
-        var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>())
-            .Where(e => e.Kind != MapEntityKind.Grass)
-            .ToLookup(e => e.Position.Y);
+        // Maps vary in exactly which layers they declare - Town/Mountain/Railroad etc. add
+        // Back2/Back3/Buildings2/Buildings3 for extra detail the base Back/Buildings layers
+        // don't carry. A fixed 6-name layer list left those un-rendered, showing the plain
+        // background fill through as gaps wherever only an extra layer had a tile ("weird
+        // squares"). Drawing every layer the map actually declares, split only by whether
+        // entities should draw on top of it, covers any map's real layer set.
+        //
+        // "Paths" is deliberately excluded - it isn't ground art at all. Its tileset
+        // (Maps/paths.png) is a flat gray sheet of numbered debug glyphs; the game reads tile
+        // indices from this layer to drive daily forage/stone/twig/stump spawn logic and never
+        // draws it. Rendering it painted debug icons across every tile with a spawn point.
+        var visibleLayers = map.Layers.Where(l => !string.Equals(l.Name, "Paths", StringComparison.OrdinalIgnoreCase)).ToList();
+        var afterEntityLayers = visibleLayers
+            .Where(l => l.Name.StartsWith("Front", StringComparison.OrdinalIgnoreCase) || l.Name.StartsWith("AlwaysFront", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var beforeEntityLayers = visibleLayers.Except(afterEntityLayers).ToList();
 
+        var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>()).ToLookup(e => e.Position.Y);
         var allEntities = entitiesByRow.SelectMany(g => g).ToList();
 
         // Row-by-row interleaving approximates the game's Y-sorted draw order: a tall sprite
@@ -226,9 +233,8 @@ public sealed class FarmMapControl : Control
         // stacked vertically occlude each other in the right order without a full scene graph.
         for (var y = 0; y < map.Height; y++)
         {
-            DrawLayerRow("Back", y);
-            DrawLayerRow("Buildings", y);
-            DrawLayerRow("Paths", y);
+            foreach (var layer in beforeEntityLayers)
+                DrawLayerRow(layer, y);
 
             foreach (var entity in entitiesByRow[y])
             {
@@ -237,9 +243,8 @@ public sealed class FarmMapControl : Control
             }
         }
 
-        DrawLayerFull("Front");
-        DrawLayerFull("AlwaysFront");
-        DrawLayerFull("AlwaysFront2");
+        foreach (var layer in afterEntityLayers)
+            DrawLayerFull(layer);
 
         // Guarantee the selection stays visible even if something drawn after it (a taller
         // sprite in a later row, or a Front-layer tile) would otherwise cover it - the actual
@@ -322,6 +327,28 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        if (entity.Kind == MapEntityKind.Building && entity.Source is BuildingEditor building
+            && !string.IsNullOrEmpty(ContentFolder)
+            && TryDrawBuildingSprite(context, building, entity.Position, entity.Width, entity.Height, pixelOffsetX, pixelOffsetY, scale))
+        {
+            return;
+        }
+
+        if (entity.Kind == MapEntityKind.Grass && entity.Source is GrassEditor grass
+            && !string.IsNullOrEmpty(ContentFolder)
+            && GrassSprites.TryGetSprite(ContentFolder, grass.GrassType, Season, entity.Position.X, entity.Position.Y, out var grassBitmap, out var grassSource))
+        {
+            // Grass tufts are taller than one tile and rooted at the ground, same anchoring as
+            // tree canopies (TryDrawTreeSprite) - bottom-center of the tile, not top-left.
+            var pixelsPerSourcePixel = scale / 16.0;
+            var gw = grassSource.Width * pixelsPerSourcePixel;
+            var gh = grassSource.Height * pixelsPerSourcePixel;
+            var gx = pixelOffsetX + entity.Position.X * scale + scale / 2 - gw / 2;
+            var gy = pixelOffsetY + entity.Position.Y * scale + scale - gh;
+            context.DrawImage(grassBitmap, grassSource, new Rect(gx, gy, gw, gh));
+            return;
+        }
+
         // Multi-tile entities (buildings) fill their real footprint; everything else gets a
         // marker slightly smaller than one tile.
         var isFootprint = entity.Width > 1 || entity.Height > 1;
@@ -365,6 +392,29 @@ public sealed class FarmMapControl : Control
         var tileLeft = pixelOffsetX + position.X * scale;
         var tileBottom = pixelOffsetY + position.Y * scale + scale;
         var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
+
+        context.DrawImage(bitmap, source, dest);
+        return true;
+    }
+
+    /// <summary>
+    /// Draws a placed building's real sprite (Buildings/{BuildingType}.png - one full image
+    /// per building, not a shared spritesheet) anchored at the bottom-center of its tile
+    /// footprint, same reasoning as trees: building art extends upward from its base (walls +
+    /// roof) taller than the footprint itself.
+    /// </summary>
+    private bool TryDrawBuildingSprite(DrawingContext context, BuildingEditor building, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale)
+    {
+        if (!BuildingSprites.TryGetSprite(ContentFolder!, building.BuildingType, out var bitmap, out var source))
+            return false;
+
+        var pixelsPerSourcePixel = scale / 16.0;
+        var destWidth = source.Width * pixelsPerSourcePixel;
+        var destHeight = source.Height * pixelsPerSourcePixel;
+
+        var footprintLeft = pixelOffsetX + position.X * scale;
+        var footprintBottom = pixelOffsetY + position.Y * scale + height * scale;
+        var dest = new Rect(footprintLeft + width * scale / 2 - destWidth / 2, footprintBottom - destHeight, destWidth, destHeight);
 
         context.DrawImage(bitmap, source, dest);
         return true;

@@ -29,12 +29,17 @@ public partial class MapTabViewModel : ViewModelBase
 
     public MapTabViewModel()
     {
-        // Prefer whatever the user explicitly set last time; if this is a fresh machine/settings
-        // file, fall back to searching common install locations before giving up and asking.
+        // Prefer whatever the user explicitly set last time (e.g. after Auto-Extract pulled
+        // fresher art from a live install); otherwise the tile art committed to the repo and
+        // copied next to the exe at build time (see BundledContent) means there's real art
+        // out of the box with no per-machine setup. Searching common install locations is only
+        // a last resort for the rare case neither of those is present.
         var saved = AppSettings.Load().MapContentFolder;
         ContentFolder = !string.IsNullOrEmpty(saved) && Directory.Exists(saved)
             ? saved
-            : GameInstallLocator.FindExtractedContentFolder() ?? "";
+            : BundledContent.IsAvailable
+                ? BundledContent.FolderPath
+                : GameInstallLocator.FindExtractedContentFolder() ?? "";
     }
 
     partial void OnContentFolderChanged(string value)
