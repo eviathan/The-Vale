@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using StardewTools.Core.Models;
 using StardewTools.SaveEditor.MapAssets;
 using StardewTools.SaveEditor.ViewModels;
@@ -53,6 +55,25 @@ public sealed class FarmMapControl : Control
 
     public static readonly StyledProperty<IReadOnlyList<MapEntitySummary>> SelectedRangeProperty =
         AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<MapEntitySummary>>(nameof(SelectedRange), Array.Empty<MapEntitySummary>(), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    /// <summary>Whether a draw tool (Object/Building) is armed in the side panel. When true, a
+    /// click-and-drag paints one placement per tile crossed instead of the normal marquee
+    /// range-select - see OnPointerMoved.</summary>
+    public static readonly StyledProperty<bool> IsPlacementToolActiveProperty =
+        AvaloniaProperty.Register<FarmMapControl, bool>(nameof(IsPlacementToolActive));
+
+    /// <summary>Screen pixels per native texture pixel - 4 matches the game's own pixel-art
+    /// scale (16px/tile source art x4 = 64px/tile on screen), i.e. "native resolution".</summary>
+    public static readonly StyledProperty<double> ZoomProperty =
+        AvaloniaProperty.Register<FarmMapControl, double>(nameof(Zoom), 4.0);
+
+    /// <summary>The tile coordinate at the viewport's top-left corner - panning moves this,
+    /// not any pixel offset, so it stays meaningful across zoom changes.</summary>
+    public static readonly StyledProperty<double> PanOffsetTileXProperty =
+        AvaloniaProperty.Register<FarmMapControl, double>(nameof(PanOffsetTileX));
+
+    public static readonly StyledProperty<double> PanOffsetTileYProperty =
+        AvaloniaProperty.Register<FarmMapControl, double>(nameof(PanOffsetTileY));
 
     public IEnumerable<MapEntitySummary>? Entities
     {
@@ -135,9 +156,45 @@ public sealed class FarmMapControl : Control
         private set => SetValue(SelectedRangeProperty, value);
     }
 
+    public bool IsPlacementToolActive
+    {
+        get => GetValue(IsPlacementToolActiveProperty);
+        set => SetValue(IsPlacementToolActiveProperty, value);
+    }
+
+    public double Zoom
+    {
+        get => GetValue(ZoomProperty);
+        set => SetValue(ZoomProperty, value);
+    }
+
+    public double PanOffsetTileX
+    {
+        get => GetValue(PanOffsetTileXProperty);
+        set => SetValue(PanOffsetTileXProperty, value);
+    }
+
+    public double PanOffsetTileY
+    {
+        get => GetValue(PanOffsetTileYProperty);
+        set => SetValue(PanOffsetTileYProperty, value);
+    }
+
     static FarmMapControl()
     {
-        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty);
+        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
+            ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty);
+        FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
+        ClipToBoundsProperty.OverrideDefaultValue<FarmMapControl>(true); // at native zoom the map is almost always bigger than the viewport - without this it draws straight over the side panel instead of being cropped to its own column
+    }
+
+    public FarmMapControl()
+    {
+        // macOS trackpad pinch arrives as this gesture (Delta.X == Delta.Y == the raw magnification
+        // delta from NSEvent, NOT a touch-pointer Pinch gesture - PinchGestureRecognizer only reacts
+        // to PointerType.Touch/Pen, which a laptop trackpad never reports as), confirmed against the
+        // Avalonia.Native source (AvnView.mm magnifyWithEvent: -> MouseDevice.GestureMagnify).
+        this.AddHandler(Gestures.PointerTouchPadGestureMagnifyEvent, OnTouchPadMagnify);
     }
 
     private static readonly IReadOnlyDictionary<string, Color> SeasonBackgrounds = new Dictionary<string, Color>
@@ -156,10 +213,30 @@ public sealed class FarmMapControl : Control
     private TilePosition? _dragStartTile;
     private TilePosition? _dragCurrentTile;
     private bool _isDragging;
+    private bool _isPainting;
+    private TilePosition? _lastPaintedTile;
+    private bool _needsViewCentering;
+    private bool _spaceHeld;
+    private Point? _panStartPoint;
+    private (double X, double Y)? _panStartOffset;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+
+        if (change.Property == EntitiesProperty)
+        {
+            // Entities is the same ObservableCollection instance for the whole session - Add/
+            // Remove/Replace mutate it in place rather than rebinding a new collection, so the
+            // AffectsRender registration above (which only fires on a StyledProperty value
+            // *change*, i.e. a different collection reference) never sees most edits. Listening
+            // to CollectionChanged directly is what makes remove/collect/confirm-placement
+            // repaint immediately instead of only on the next click.
+            if (change.OldValue is INotifyCollectionChanged oldIncc)
+                oldIncc.CollectionChanged -= OnEntitiesCollectionChanged;
+            if (change.NewValue is INotifyCollectionChanged newIncc)
+                newIncc.CollectionChanged += OnEntitiesCollectionChanged;
+        }
 
         if ((change.Property == ContentFolderProperty || change.Property == LocationNameProperty)
             && (ContentFolder != _loadedFolder || LocationName != _loadedLocation))
@@ -168,12 +245,15 @@ public sealed class FarmMapControl : Control
         }
     }
 
+    private void OnEntitiesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => InvalidateVisual();
+
     private void TryLoadMap()
     {
         _loadedFolder = ContentFolder;
         _loadedLocation = LocationName;
         _map = null;
         _loader = null;
+        _needsViewCentering = true; // a genuinely different map just loaded - re-center pan/zoom on it once, then leave the user's view alone
 
         if (string.IsNullOrWhiteSpace(ContentFolder))
         {
@@ -230,18 +310,40 @@ public sealed class FarmMapControl : Control
 
     private void RenderRealMap(DrawingContext context, TmxMap map, MapAssetLoader loader)
     {
-        var mapPixelWidth = map.Width * map.TileWidth;
-        var mapPixelHeight = map.Height * map.TileHeight;
-        var scale = Math.Max(0.01, Math.Min(Bounds.Width / mapPixelWidth, Bounds.Height / mapPixelHeight));
+        var tileScale = 16.0 * Zoom; // 16 = native texture px/tile; Zoom=4 (the default) matches the game's own 4x pixel-art scale, i.e. "native resolution"
 
-        // Center the map instead of anchoring at (0,0) - the map's aspect ratio rarely matches
-        // the control's exactly, so one dimension always has leftover space. That space used to
-        // be a flat black fill reaching the control edge, which read as a rendering bug rather
-        // than a letterboxing bar.
-        var offsetX = (Bounds.Width - mapPixelWidth * scale) / 2;
-        var offsetY = (Bounds.Height - mapPixelHeight * scale) / 2;
-        var tileScale = scale * map.TileWidth;
-        _lastLayout = (-offsetX / tileScale, -offsetY / tileScale, tileScale); // Scale is per-tile here, not per-pixel - see hit-testing below.
+        // A freshly-loaded map gets centered once (same math the old fit-to-bounds path used,
+        // just written into the pan properties instead of recomputed every frame) - after that,
+        // the user's own pan/zoom is left alone until the next map/location change.
+        double panOffsetTileX, panOffsetTileY;
+        if (_needsViewCentering)
+        {
+            _needsViewCentering = false;
+            var mapPixelWidth = map.Width * map.TileWidth;
+            var mapPixelHeight = map.Height * map.TileHeight;
+            panOffsetTileX = (mapPixelWidth - Bounds.Width / Zoom) / 2 / map.TileWidth;
+            panOffsetTileY = (mapPixelHeight - Bounds.Height / Zoom) / 2 / map.TileHeight;
+
+            // PanOffsetTileX/Y are AffectsRender StyledProperties - setting them here, mid-Render,
+            // throws "Visual was invalidated during the render pass". Use the computed values for
+            // this frame directly and defer persisting them until after the render pass completes.
+            var centeredX = panOffsetTileX;
+            var centeredY = panOffsetTileY;
+            Dispatcher.UIThread.Post(() =>
+            {
+                PanOffsetTileX = centeredX;
+                PanOffsetTileY = centeredY;
+            });
+        }
+        else
+        {
+            panOffsetTileX = PanOffsetTileX;
+            panOffsetTileY = PanOffsetTileY;
+        }
+
+        var offsetX = -panOffsetTileX * tileScale;
+        var offsetY = -panOffsetTileY * tileScale;
+        _lastLayout = (panOffsetTileX, panOffsetTileY, tileScale); // Scale is per-tile here, not per-pixel - see hit-testing below.
 
         context.FillRectangle(new SolidColorBrush(Color.Parse("#1a1a1a")), new Rect(Bounds.Size));
 
@@ -257,7 +359,7 @@ public sealed class FarmMapControl : Control
                 var bitmap = loader.GetTilesetBitmap(tileset.ImageSource, Season);
                 var (col, row) = tileset.TilePosition(gid);
                 var source = new Rect(col * tileset.TileWidth, row * tileset.TileHeight, tileset.TileWidth, tileset.TileHeight);
-                var dest = new Rect(offsetX + x * map.TileWidth * scale, offsetY + y * map.TileHeight * scale, map.TileWidth * scale, map.TileHeight * scale);
+                var dest = new Rect(offsetX + x * tileScale, offsetY + y * tileScale, tileScale, tileScale);
                 context.DrawImage(bitmap, source, dest);
             }
         }
@@ -528,6 +630,9 @@ public sealed class FarmMapControl : Control
     /// </summary>
     private bool TryDrawBuildingSprite(DrawingContext context, BuildingEditor building, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale)
     {
+        if (building.BuildingType == "Fish Pond")
+            return TryDrawFishPondSprite(context, position, width, height, pixelOffsetX, pixelOffsetY, scale);
+
         if (!BuildingSprites.TryGetSprite(ContentFolder!, building.BuildingType, out var bitmap, out var source))
             return false;
 
@@ -543,20 +648,81 @@ public sealed class FarmMapControl : Control
         return true;
     }
 
+    /// <summary>
+    /// Fish Pond's own sheet (Buildings/Fish Pond.png) only holds the stone rim - unlike every
+    /// other building here, the game composites the water in separately at draw time, so
+    /// drawing just the rim (the generic single-image path above) leaves the pond's interior
+    /// see-through. Verified against the decompiled FishPond.draw(): it fills Rectangle(0, 80,
+    /// 80, 80) from its own sheet - a pre-shaped water silhouette, drawn as an opacity mask here
+    /// since Avalonia has no SpriteBatch-style color tint - with Color(60, 126, 150) (the
+    /// game's own default water tint, used whenever a pond has no special override color), THEN
+    /// the rim itself (Rectangle(0, 0, 80, 80)) on top. The animated ripple overlay and per-pond
+    /// netting style the real game also draws are cosmetic layers on top of this and are
+    /// skipped - BuildingEditor doesn't track a netting style field yet.
+    /// </summary>
+    private bool TryDrawFishPondSprite(DrawingContext context, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale)
+    {
+        if (!BuildingSprites.TryGetBitmap(ContentFolder!, "Fish Pond", out var bitmap))
+            return false;
+
+        var pixelsPerSourcePixel = scale / 16.0;
+        const double frameSize = 80;
+        var destSize = frameSize * pixelsPerSourcePixel;
+
+        var footprintLeft = pixelOffsetX + position.X * scale;
+        var footprintBottom = pixelOffsetY + position.Y * scale + height * scale;
+        var dest = new Rect(footprintLeft + width * scale / 2 - destSize / 2, footprintBottom - destSize, destSize, destSize);
+
+        var waterMask = new ImageBrush(bitmap)
+        {
+            SourceRect = new RelativeRect(0, 80, frameSize, frameSize, RelativeUnit.Absolute),
+            Stretch = Stretch.Fill,
+        };
+        using (context.PushOpacityMask(waterMask, dest))
+            context.FillRectangle(new SolidColorBrush(Color.FromRgb(60, 126, 150)), dest);
+
+        context.DrawImage(bitmap, new Rect(0, 0, frameSize, frameSize), dest);
+        return true;
+    }
+
     private TilePosition FloorTile(Point point, (double MinX, double MinY, double Scale) layout)
         => new((int)Math.Floor(point.X / layout.Scale + layout.MinX), (int)Math.Floor(point.Y / layout.Scale + layout.MinY));
 
     /// <summary>Resolution is deferred to release (see OnPointerReleased) so a click can turn
     /// into a drag - this just records where the gesture started and captures the pointer so
-    /// drags that leave the control's bounds are still tracked.</summary>
+    /// drags that leave the control's bounds are still tracked. Spacebar-held always means
+    /// "pan" regardless of anything else (checked first, before click/drag-select or any
+    /// placement tool), matching the standard space+drag convention.</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        Focus(); // so this control (not whatever was focused before) receives the space-key events panning depends on
 
         if (_lastLayout is not { } layout)
             return;
 
+        if (_spaceHeld)
+        {
+            _panStartPoint = e.GetPosition(this);
+            _panStartOffset = (PanOffsetTileX, PanOffsetTileY);
+            e.Pointer.Capture(this);
+            return;
+        }
+
         var tile = FloorTile(e.GetPosition(this), layout);
+
+        // A draw tool being armed turns click-and-drag into "paint one placement per tile
+        // crossed" instead of marquee range-select - see OnPointerMoved. A plain click (no
+        // drag) behaves the same either way: ClickedTile fires once for the pressed tile.
+        if (IsPlacementToolActive)
+        {
+            _isPainting = true;
+            _lastPaintedTile = tile;
+            ClickedTile = tile;
+            e.Pointer.Capture(this);
+            return;
+        }
+
         ClickedTile = tile;
         _dragStartTile = tile;
         _dragCurrentTile = tile;
@@ -570,7 +736,32 @@ public sealed class FarmMapControl : Control
     {
         base.OnPointerMoved(e);
 
-        if (_dragStartTile is not { } start || _lastLayout is not { } layout)
+        if (_lastLayout is not { } layout)
+            return;
+
+        if (_panStartPoint is { } panStart && _panStartOffset is { } panOffset)
+        {
+            var current = e.GetPosition(this);
+            PanOffsetTileX = panOffset.X - (current.X - panStart.X) / layout.Scale;
+            PanOffsetTileY = panOffset.Y - (current.Y - panStart.Y) / layout.Scale;
+            return;
+        }
+
+        if (_isPainting)
+        {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                return;
+
+            var paintTile = FloorTile(e.GetPosition(this), layout);
+            if (paintTile == _lastPaintedTile)
+                return;
+
+            _lastPaintedTile = paintTile;
+            ClickedTile = paintTile; // each new tile crossed re-fires OnClickedTileChanged, placing (or queuing a confirmation) there
+            return;
+        }
+
+        if (_dragStartTile is not { } start)
             return;
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             return;
@@ -591,6 +782,20 @@ public sealed class FarmMapControl : Control
         base.OnPointerReleased(e);
         e.Pointer.Capture(null);
 
+        if (_panStartPoint is not null)
+        {
+            _panStartPoint = null;
+            _panStartOffset = null;
+            return;
+        }
+
+        if (_isPainting)
+        {
+            _isPainting = false;
+            _lastPaintedTile = null;
+            return;
+        }
+
         if (_dragStartTile is not { } start)
             return;
 
@@ -603,6 +808,72 @@ public sealed class FarmMapControl : Control
         _dragCurrentTile = null;
         _isDragging = false;
         InvalidateVisual();
+    }
+
+    /// <summary>Plain scroll pans (vertical wheel/trackpad delta -> Y pan, horizontal/shift
+    /// -> X pan - standard convention); Ctrl or Cmd+scroll zooms instead, anchored so the tile
+    /// under the cursor stays under the cursor.</summary>
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+
+        if (_lastLayout is not { } layout)
+            return;
+
+        var zooming = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (!zooming)
+        {
+            PanOffsetTileX -= e.Delta.X * 3;
+            PanOffsetTileY -= e.Delta.Y * 3;
+            e.Handled = true;
+            return;
+        }
+
+        ApplyZoom(Zoom * (e.Delta.Y > 0 ? 1.1 : 1 / 1.1), e.GetPosition(this), layout);
+        e.Handled = true;
+    }
+
+    /// <summary>macOS trackpad pinch. Delta.X/.Y are both the same raw per-callback
+    /// magnification value straight from NSEvent (see the constructor remarks) - small and
+    /// signed (positive = spreading fingers = zoom in), so it's applied as a multiplicative
+    /// factor around 1.0 each callback, same shape as the ctrl+scroll step above just driven by
+    /// a real gesture instead of a fixed 1.1 increment.</summary>
+    private void OnTouchPadMagnify(object? sender, PointerDeltaEventArgs e)
+    {
+        if (_lastLayout is not { } layout)
+            return;
+
+        ApplyZoom(Zoom * (1 + e.Delta.X), e.GetPosition(this), layout);
+        e.Handled = true;
+    }
+
+    /// <summary>Shared cursor-anchored zoom math: solves the new pan offset so the same map
+    /// tile stays under the cursor/pinch-center before and after the zoom change.</summary>
+    private void ApplyZoom(double requestedZoom, Point cursor, (double MinX, double MinY, double Scale) layout)
+    {
+        var tileUnderCursorX = cursor.X / layout.Scale + layout.MinX;
+        var tileUnderCursorY = cursor.Y / layout.Scale + layout.MinY;
+
+        var newZoom = Math.Clamp(requestedZoom, 1.0, 12.0);
+        var newTileScale = 16.0 * newZoom;
+
+        Zoom = newZoom;
+        PanOffsetTileX = tileUnderCursorX - cursor.X / newTileScale;
+        PanOffsetTileY = tileUnderCursorY - cursor.Y / newTileScale;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key == Key.Space)
+            _spaceHeld = true;
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        if (e.Key == Key.Space)
+            _spaceHeld = false;
     }
 
     /// <summary>Exactly today's single-click behavior (nearest-entity hit test, falling back

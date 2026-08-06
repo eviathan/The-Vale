@@ -12,6 +12,7 @@ namespace StardewTools.SaveEditor;
 public sealed class AppSettings
 {
     public string? MapContentFolder { get; set; }
+    public string? LastSaveFilePath { get; set; }
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

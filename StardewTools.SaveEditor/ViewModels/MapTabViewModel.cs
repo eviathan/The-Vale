@@ -11,6 +11,13 @@ using StardewTools.SaveEditor.MapAssets;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
+public enum PlacementTool { None, Object, Building }
+
+/// <summary>A placement that's blocked by existing entities - Confirm removes them and places;
+/// Cancel just drops this. Blocking is captured up front (at click time), not re-derived at
+/// confirm time, so the confirmation panel's list can't drift from what Confirm will actually do.</summary>
+public sealed record PendingPlacement(string Label, IReadOnlyList<MapEntitySummary> Blocking, Action Confirm);
+
 public partial class MapTabViewModel : ViewModelBase
 {
     private FarmMapEditor? _map;
@@ -45,6 +52,39 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
     private PlaceableBuilding? _selectedPlaceableBuilding;
+
+    [ObservableProperty] private PlacementTool _placementTool = PlacementTool.None;
+
+    /// <summary>Bool proxies over PlacementTool so the two toggle buttons in the panel don't
+    /// need an enum-to-bool converter - setting one turns the other off (mutually exclusive
+    /// tools), and OnPlacementToolChanged keeps both in sync when either one changes.</summary>
+    public bool IsObjectToolActive
+    {
+        get => PlacementTool == PlacementTool.Object;
+        set => PlacementTool = value ? PlacementTool.Object : PlacementTool.None;
+    }
+
+    public bool IsBuildingToolActive
+    {
+        get => PlacementTool == PlacementTool.Building;
+        set => PlacementTool = value ? PlacementTool.Building : PlacementTool.None;
+    }
+
+    /// <summary>Drives FarmMapControl.IsPlacementToolActive - whether either draw tool is
+    /// armed, regardless of which one, so a click-and-drag paints instead of marquee-selecting.</summary>
+    public bool IsAnyToolActive => PlacementTool != PlacementTool.None;
+
+    partial void OnPlacementToolChanged(PlacementTool value)
+    {
+        OnPropertyChanged(nameof(IsObjectToolActive));
+        OnPropertyChanged(nameof(IsBuildingToolActive));
+        OnPropertyChanged(nameof(IsAnyToolActive));
+    }
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ConfirmPendingPlacementCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelPendingPlacementCommand))]
+    private PendingPlacement? _pendingPlacement;
 
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
@@ -225,12 +265,18 @@ public partial class MapTabViewModel : ViewModelBase
 
     /// <summary>Places SelectedPlaceableItem at ClickedTile (last click on the map, set by
     /// FarmMapControl regardless of whether it hit an entity - see FarmMapControl.ClickedTile).
-    /// Only Objects are placeable so far; trees/buildings/grass would need their own item
-    /// pickers with type-specific defaults (species, growth stage, ...), not just an index.</summary>
+    /// Only Objects are placeable so far; trees/grass would need their own item pickers with
+    /// type-specific defaults (species, growth stage, ...), not just an index.</summary>
     [RelayCommand(CanExecute = nameof(CanPlaceObject))]
     private void PlaceObject()
     {
-        if (_map is null || SelectedPlaceableItem is not { } item || ClickedTile is not { } tile)
+        if (SelectedPlaceableItem is { } item && ClickedTile is { } tile)
+            PlaceObjectAt(tile, item);
+    }
+
+    private void PlaceObjectAt(TilePosition tile, PlaceableItem item)
+    {
+        if (_map is null)
             return;
 
         var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
@@ -248,7 +294,13 @@ public partial class MapTabViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanPlaceBuilding))]
     private void PlaceBuilding()
     {
-        if (_map is null || SelectedPlaceableBuilding is not { } building || ClickedTile is not { } tile)
+        if (SelectedPlaceableBuilding is { } building && ClickedTile is { } tile)
+            PlaceBuildingAt(tile, building);
+    }
+
+    private void PlaceBuildingAt(TilePosition tile, PlaceableBuilding building)
+    {
+        if (_map is null)
             return;
 
         var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical);
@@ -257,6 +309,65 @@ public partial class MapTabViewModel : ViewModelBase
         Entities.Add(summary);
         Selected = summary;
     }
+
+    /// <summary>The "draw tool" flow: when a placement tool is active and the map reports a
+    /// new click, place immediately if the target footprint is clear, or stage a
+    /// PendingPlacement (and wait for the Confirm/Cancel buttons) if something's in the way -
+    /// "clicking drops a single at that position if possible [...] if possible to change the
+    /// existing tiles to a state where its possible triggers a confirmation".</summary>
+    partial void OnClickedTileChanged(TilePosition? value)
+    {
+        if (value is not { } tile || _map is null || SelectedLocationName != "Farm")
+            return;
+
+        switch (PlacementTool)
+        {
+            case PlacementTool.Object when SelectedPlaceableItem is { } item:
+                TryPlaceOrConfirm(tile, 1, 1, item.ToString(), () => PlaceObjectAt(tile, item));
+                break;
+            case PlacementTool.Building when SelectedPlaceableBuilding is { } building:
+                TryPlaceOrConfirm(tile, building.TilesWide, building.TilesHigh, building.ToString(), () => PlaceBuildingAt(tile, building));
+                break;
+        }
+    }
+
+    private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place)
+    {
+        var blocking = Entities
+            .Where(e => e.Position.X + e.Width - 1 >= tile.X && e.Position.X <= tile.X + width - 1
+                     && e.Position.Y + e.Height - 1 >= tile.Y && e.Position.Y <= tile.Y + height - 1)
+            .ToList();
+
+        if (blocking.Count == 0)
+        {
+            place();
+            return;
+        }
+
+        PendingPlacement = new PendingPlacement(label, blocking, place);
+    }
+
+    private bool HasPendingPlacement => PendingPlacement is not null;
+
+    [RelayCommand(CanExecute = nameof(HasPendingPlacement))]
+    private void ConfirmPendingPlacement()
+    {
+        if (PendingPlacement is not { } pending)
+            return;
+
+        foreach (var entity in pending.Blocking)
+        {
+            RemoveFromMap(entity);
+            Entities.Remove(entity);
+            _farmEntitiesCache.Remove(entity);
+        }
+
+        pending.Confirm();
+        PendingPlacement = null;
+    }
+
+    [RelayCommand(CanExecute = nameof(HasPendingPlacement))]
+    private void CancelPendingPlacement() => PendingPlacement = null;
 
     [RelayCommand]
     private async Task AutoExtractAsync()

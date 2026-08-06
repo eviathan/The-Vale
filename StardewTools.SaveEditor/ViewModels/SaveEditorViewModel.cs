@@ -42,6 +42,10 @@ public partial class SaveEditorViewModel : ViewModelBase
 
         IsSaveLoaded = true;
         StatusMessage = $"Loaded {Path.GetFileName(path)}";
+
+        var settings = AppSettings.Load();
+        settings.LastSaveFilePath = path;
+        settings.Save();
     }
 
     public void Save()

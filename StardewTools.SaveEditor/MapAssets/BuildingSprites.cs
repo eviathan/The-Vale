@@ -18,6 +18,23 @@ public static class BuildingSprites
 
     public static bool TryGetSprite(string contentFolder, string buildingType, out Bitmap bitmap, out Rect source)
     {
+        if (!TryGetBitmap(contentFolder, buildingType, out bitmap))
+        {
+            source = default;
+            return false;
+        }
+
+        source = new Rect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height);
+        return true;
+    }
+
+    /// <summary>The raw, uncropped sheet for a building type. Most buildings are one plain
+    /// image and TryGetSprite (the whole bitmap as its own source rect) is all they need, but a
+    /// few - Fish Pond confirmed so far - pack multiple composited layers into one sheet (see
+    /// FarmMapControl.TryDrawBuildingSprite's Fish Pond special case) and need the bitmap
+    /// without an assumed single source rect.</summary>
+    public static bool TryGetBitmap(string contentFolder, string buildingType, out Bitmap bitmap)
+    {
         var key = contentFolder + "|" + buildingType;
         if (!Cache.TryGetValue(key, out var cached))
         {
@@ -26,15 +43,7 @@ public static class BuildingSprites
             Cache[key] = cached;
         }
 
-        if (cached is null)
-        {
-            bitmap = null!;
-            source = default;
-            return false;
-        }
-
-        bitmap = cached;
-        source = new Rect(0, 0, cached.PixelSize.Width, cached.PixelSize.Height);
-        return true;
+        bitmap = cached!;
+        return cached is not null;
     }
 }
