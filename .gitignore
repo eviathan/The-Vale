@@ -3,6 +3,12 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# Local-only reference material (e.g. decompiled game source used to verify save/rendering
+# parity during development) - never committed: this is a bigger, more direct copy of
+# ConcernedApe's proprietary game logic than the extracted textures under /Resources, not
+# something that belongs in git history even privately.
+.reference/
+
 # dotenv files
 .env
 

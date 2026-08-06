@@ -235,12 +235,22 @@
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding SelectedLocationName}"
                                                           HouseUpgradeLevel="{Binding HouseUpgradeLevel}"
+                                                          ClickedTile="{Binding ClickedTile}"
                                                           MinHeight="400"/>
                             </DockPanel>
 
                             <ScrollViewer Grid.Column="1" Margin="16,0,0,0">
                                 <StackPanel Spacing="10">
-                                    <TextBlock Text="Selected entity" FontWeight="Bold" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                    <TextBlock Text="Place item" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding ClickedTile, StringFormat='At tile: {0}', TargetNullValue='Click a tile on the map first'}"
+                                               Opacity="0.7" TextWrapping="Wrap"/>
+                                    <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableItems}" SelectedItem="{Binding SelectedPlaceableItem}"
+                                                      FilterMode="Contains" Watermark="Search items..."/>
+                                    <Button Content="Place" Command="{Binding PlaceObjectCommand}"/>
+                                    <TextBlock Text="Only plain objects (debris, produce, forage, etc.) can be placed so far - trees, buildings and animals need their own pickers with type-specific defaults."
+                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+
+                                    <TextBlock Text="Selected entity" FontWeight="Bold" Margin="0,10,0,0" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
                                     <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
                                     <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
 

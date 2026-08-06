@@ -26,8 +26,17 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty] private string _selectedLocationName = "Farm";
     [ObservableProperty] private int _houseUpgradeLevel;
 
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
+    private PlaceableItem? _selectedPlaceableItem;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
+    private TilePosition? _clickedTile;
+
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
+    public IReadOnlyList<PlaceableItem> AvailablePlaceableItems => PlaceableItems.All;
 
     public MapTabViewModel()
     {
@@ -151,6 +160,25 @@ public partial class MapTabViewModel : ViewModelBase
             ? $"{_farmEntitiesCache.Count} placed entities on the Farm."
             : $"{_farmEntitiesCache.Count} placed entities on the Farm. Also {unmodeled.Count} tile(s) of " +
               $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
+    }
+
+    private bool CanPlaceObject() => _map is not null && SelectedPlaceableItem is not null && ClickedTile is not null && SelectedLocationName == "Farm";
+
+    /// <summary>Places SelectedPlaceableItem at ClickedTile (last click on the map, set by
+    /// FarmMapControl regardless of whether it hit an entity - see FarmMapControl.ClickedTile).
+    /// Only Objects are placeable so far; trees/buildings/grass would need their own item
+    /// pickers with type-specific defaults (species, growth stage, ...), not just an index.</summary>
+    [RelayCommand(CanExecute = nameof(CanPlaceObject))]
+    private void PlaceObject()
+    {
+        if (_map is null || SelectedPlaceableItem is not { } item || ClickedTile is not { } tile)
+            return;
+
+        var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type);
+        var summary = MapEntitySummary.FromObject(placed);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
     }
 
     [RelayCommand]

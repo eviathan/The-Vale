@@ -47,6 +47,9 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<int> HouseUpgradeLevelProperty =
         AvaloniaProperty.Register<FarmMapControl, int>(nameof(HouseUpgradeLevel));
 
+    public static readonly StyledProperty<TilePosition?> ClickedTileProperty =
+        AvaloniaProperty.Register<FarmMapControl, TilePosition?>(nameof(ClickedTile), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
     public IEnumerable<MapEntitySummary>? Entities
     {
         get => GetValue(EntitiesProperty);
@@ -108,6 +111,15 @@ public sealed class FarmMapControl : Control
     {
         get => GetValue(HouseUpgradeLevelProperty);
         set => SetValue(HouseUpgradeLevelProperty, value);
+    }
+
+    /// <summary>The tile under the last click, regardless of whether it hit an entity - lets
+    /// the Map tab offer "place item here" targeting wherever the user last pointed, not just
+    /// empty tiles.</summary>
+    public TilePosition? ClickedTile
+    {
+        get => GetValue(ClickedTileProperty);
+        private set => SetValue(ClickedTileProperty, value);
     }
 
     static FarmMapControl()
@@ -352,6 +364,16 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        if (entity.Kind == MapEntityKind.ResourceClump && entity.Source is ResourceClumpEditor clump
+            && !string.IsNullOrEmpty(ContentFolder)
+            && ObjectSprites.TryGetClumpSprite(ContentFolder, clump.ParentSheetIndex, clump.Width, clump.Height, out var clumpBitmap, out var clumpSource))
+        {
+            var cx = pixelOffsetX + entity.Position.X * scale;
+            var cy = pixelOffsetY + entity.Position.Y * scale;
+            context.DrawImage(clumpBitmap, clumpSource, new Rect(cx, cy, clump.Width * scale, clump.Height * scale));
+            return;
+        }
+
         if (entity.Kind == MapEntityKind.Building && entity.Source is BuildingEditor building
             && !string.IsNullOrEmpty(ContentFolder)
             && TryDrawBuildingSprite(context, building, entity.Position, entity.Width, entity.Height, pixelOffsetX, pixelOffsetY, scale))
@@ -455,6 +477,7 @@ public sealed class FarmMapControl : Control
         var point = e.GetPosition(this);
         var tileX = point.X / layout.Scale + layout.MinX;
         var tileY = point.Y / layout.Scale + layout.MinY;
+        ClickedTile = new TilePosition((int)Math.Floor(tileX), (int)Math.Floor(tileY));
 
         // Distance to the nearest point of the entity's footprint, not just its top-left tile -
         // otherwise a multi-tile building is only clickable right at one corner.

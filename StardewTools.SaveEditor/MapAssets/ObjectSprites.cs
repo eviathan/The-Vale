@@ -42,4 +42,23 @@ public static class ObjectSprites
         source = new Rect(col * CellSize, row * CellSize, CellSize, CellSize);
         return true;
     }
+
+    /// <summary>
+    /// Resource clumps (stumps, hollow logs, boulders) are also indexed into springobjects.png
+    /// - confirmed by cropping the sheet around index 600 and visually finding a 2-tile-wide
+    /// stump there - but unlike a normal 1x1 object, the source rect spans the clump's full
+    /// width/height in cells starting from that index's top-left cell (ported from the
+    /// decompiled ResourceClump.draw(): width/height * 16, not a fixed 16x16).
+    /// </summary>
+    public static bool TryGetClumpSprite(string contentFolder, int parentSheetIndex, int widthInTiles, int heightInTiles, out Bitmap bitmap, out Rect source)
+    {
+        if (!TryGetSprite(contentFolder, parentSheetIndex, out bitmap, out var cell))
+        {
+            source = default;
+            return false;
+        }
+
+        source = new Rect(cell.X, cell.Y, CellSize * widthInTiles, CellSize * heightInTiles);
+        return true;
+    }
 }

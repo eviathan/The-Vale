@@ -67,6 +67,80 @@ public sealed class FarmMapEditor
             .Select(e => new BuildingEditor(e))
             .ToList();
 
+    /// <summary>
+    /// Places a new plain Object on the farm at the given tile. The element shape (every
+    /// field, in this order) is copied from a real placed Object in an actual save, not
+    /// invented - the only per-item fields are name/parentSheetIndex/price/edibility/type/
+    /// category, which should come from real Data/Objects.json data (see PlaceableItems),
+    /// not the save's own &lt;type&gt;/&lt;category&gt; values - those turned out to already
+    /// be corrupted with placeholder junk ("asdf" as a type, wrong category) in a real save
+    /// this was verified against, apparently from some earlier, unrelated tool.
+    /// </summary>
+    public PlacedObjectEditor AddObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type)
+    {
+        var container = _farmLocation.Element("objects");
+        if (container is null)
+        {
+            container = new XElement("objects");
+            _farmLocation.Add(container);
+        }
+
+        var boundsX = position.X * 64;
+        var boundsY = position.Y * 64;
+
+        var value = new XElement("Object",
+            new XElement("isLostItem", false),
+            new XElement("category", category),
+            new XElement("hasBeenInInventory", false),
+            new XElement("name", name),
+            new XElement("parentSheetIndex", parentSheetIndex),
+            new XElement("specialItem", false),
+            new XElement("SpecialVariable", 0),
+            new XElement("DisplayName", name),
+            new XElement("Name", name),
+            new XElement("Stack", 1),
+            new XElement("tileLocation", new XElement("X", position.X), new XElement("Y", position.Y)),
+            new XElement("owner", 0),
+            new XElement("type", type),
+            new XElement("canBeSetDown", true),
+            new XElement("canBeGrabbed", true),
+            new XElement("isHoedirt", false),
+            new XElement("isSpawnedObject", false),
+            new XElement("questItem", false),
+            new XElement("questId", 0),
+            new XElement("isOn", true),
+            new XElement("fragility", 0),
+            new XElement("price", price),
+            new XElement("edibility", edibility),
+            new XElement("stack", 1),
+            new XElement("quality", 0),
+            new XElement("bigCraftable", false),
+            new XElement("setOutdoors", false),
+            new XElement("setIndoors", false),
+            new XElement("readyForHarvest", false),
+            new XElement("showNextIndex", false),
+            new XElement("flipped", false),
+            new XElement("hasBeenPickedUpByFarmer", false),
+            new XElement("isRecipe", false),
+            new XElement("isLamp", false),
+            new XElement("minutesUntilReady", 1),
+            new XElement("boundingBox",
+                new XElement("X", boundsX), new XElement("Y", boundsY),
+                new XElement("Width", 64), new XElement("Height", 64),
+                new XElement("Location", new XElement("X", boundsX), new XElement("Y", boundsY)),
+                new XElement("Size", new XElement("X", 64), new XElement("Y", 64))),
+            new XElement("scale", new XElement("X", 0), new XElement("Y", 0)),
+            new XElement("uses", 0),
+            new XElement("preservedParentSheetIndex", 0));
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new PlacedObjectEditor(position, value);
+    }
+
     public void Remove(TreeEditor tree) => tree.Item.Remove();
     public void Remove(GrassEditor grass) => grass.Item.Remove();
     public void Remove(HoeDirtEditor dirt) => dirt.Item.Remove();

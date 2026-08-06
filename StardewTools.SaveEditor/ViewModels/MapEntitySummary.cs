@@ -65,6 +65,8 @@ public sealed class MapEntitySummary
         Label = $"Resource clump (sheet {clump.ParentSheetIndex}, {clump.Width}x{clump.Height})",
         ColorHex = "#795548",
         Source = clump,
+        Width = clump.Width,
+        Height = clump.Height,
     };
 
     public static MapEntitySummary FromObject(PlacedObjectEditor placed) => new()
