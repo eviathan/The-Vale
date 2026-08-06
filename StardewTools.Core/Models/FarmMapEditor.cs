@@ -33,16 +33,22 @@ public sealed class FarmMapEditor
             .Select(e => new GrassEditor(e.Position, e.Value))
             .ToList();
 
+    /// <summary>Tilled soil, optionally with a planted crop - confirmed against a real save.</summary>
+    public IReadOnlyList<HoeDirtEditor> HoeDirtTiles
+        => DictionaryEntries("terrainFeatures")
+            .Where(e => (string?)e.Value.Attribute(XsiType) == "HoeDirt")
+            .Select(e => new HoeDirtEditor(e.Position, e.Value))
+            .ToList();
+
     /// <summary>
-    /// terrainFeatures types present that we don't model yet (e.g. HoeDirt/crops - this
-    /// reference save had none planted, so we didn't have real data to verify that schema
-    /// against). Surfaced here rather than silently dropped, so the map view can at least
-    /// say "there's also N tiles of X here" instead of pretending they don't exist.
+    /// terrainFeatures types present that we don't model yet. Surfaced here rather than
+    /// silently dropped, so the map view can at least say "there's also N tiles of X here"
+    /// instead of pretending they don't exist.
     /// </summary>
     public IReadOnlyList<(TilePosition Position, string Type)> UnmodeledTerrainFeatures
         => DictionaryEntries("terrainFeatures")
             .Select(e => (e.Position, Type: (string?)e.Value.Attribute(XsiType) ?? "Unknown"))
-            .Where(e => e.Type is not ("Tree" or "Grass"))
+            .Where(e => e.Type is not ("Tree" or "Grass" or "HoeDirt"))
             .ToList();
 
     public IReadOnlyList<ResourceClumpEditor> ResourceClumps
@@ -63,6 +69,7 @@ public sealed class FarmMapEditor
 
     public void Remove(TreeEditor tree) => tree.Item.Remove();
     public void Remove(GrassEditor grass) => grass.Item.Remove();
+    public void Remove(HoeDirtEditor dirt) => dirt.Item.Remove();
     public void Remove(ResourceClumpEditor clump) => clump.Element.Remove();
     public void Remove(PlacedObjectEditor placedObject) => placedObject.WrappingItem.Remove();
     public void Remove(BuildingEditor building) => building.Element.Remove();

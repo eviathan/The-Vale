@@ -6,6 +6,7 @@ public enum MapEntityKind
 {
     Tree,
     Grass,
+    HoeDirt,
     ResourceClump,
     Object,
     Building,
@@ -44,6 +45,17 @@ public sealed class MapEntitySummary
         Label = $"Grass (type {grass.GrassType}, {grass.NumberOfWeeds} weeds)",
         ColorHex = "#8BC34A",
         Source = grass,
+    };
+
+    public static MapEntitySummary FromHoeDirt(HoeDirtEditor dirt) => new()
+    {
+        Position = dirt.Position,
+        Kind = MapEntityKind.HoeDirt,
+        Label = dirt.Crop is { } crop
+            ? $"Crop (phase {crop.CurrentPhase}, {(dirt.State == 1 ? "watered" : "dry")}){(crop.Dead ? " [dead]" : "")}"
+            : $"Tilled soil ({(dirt.State == 1 ? "watered" : "dry")})",
+        ColorHex = dirt.Crop is not null ? "#4CAF50" : (dirt.State == 1 ? "#4E342E" : "#795548"),
+        Source = dirt,
     };
 
     public static MapEntitySummary FromClump(ResourceClumpEditor clump) => new()

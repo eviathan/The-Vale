@@ -46,4 +46,13 @@ public sealed class PlayerEditor
         get => _element.GetChildInt("stamina");
         set => _element.SetChildInt("stamina", value);
     }
+
+    /// <summary>0 = starting cabin, up to 3 (Deluxe/renovated) - the farmhouse exterior isn't a
+    /// Building save entry at all, it's a fixed overlay keyed to this level (see FarmhouseSprite
+    /// in StardewTools.SaveEditor).</summary>
+    public int HouseUpgradeLevel
+    {
+        get => _element.GetChildInt("houseUpgradeLevel");
+        set => _element.SetChildInt("houseUpgradeLevel", value);
+    }
 }

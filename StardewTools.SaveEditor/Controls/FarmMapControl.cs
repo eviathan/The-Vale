@@ -44,6 +44,9 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<string> LocationNameProperty =
         AvaloniaProperty.Register<FarmMapControl, string>(nameof(LocationName), "Farm");
 
+    public static readonly StyledProperty<int> HouseUpgradeLevelProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(HouseUpgradeLevel));
+
     public IEnumerable<MapEntitySummary>? Entities
     {
         get => GetValue(EntitiesProperty);
@@ -99,9 +102,17 @@ public sealed class FarmMapControl : Control
         set => SetValue(LocationNameProperty, value);
     }
 
+    /// <summary>0-3 - drives which exterior the farmhouse overlay uses (see FarmhouseSprite).
+    /// Not part of Entities: the farmhouse isn't a placed Building at all.</summary>
+    public int HouseUpgradeLevel
+    {
+        get => GetValue(HouseUpgradeLevelProperty);
+        set => SetValue(HouseUpgradeLevelProperty, value);
+    }
+
     static FarmMapControl()
     {
-        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty);
+        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty);
     }
 
     private static readonly IReadOnlyDictionary<string, Color> SeasonBackgrounds = new Dictionary<string, Color>
@@ -241,6 +252,20 @@ public sealed class FarmMapControl : Control
                 var opacity = Selected is { } sel && !ReferenceEquals(entity, sel) && Occludes(entity, sel) ? 0.35 : 1.0;
                 DrawSingleEntity(context, entity, offsetX, offsetY, tileScale, opacity);
             }
+        }
+
+        // The farmhouse isn't a placed Building - it's not in Entities at all, see
+        // FarmhouseSprite - so it needs its own draw call rather than going through the
+        // per-row entity loop above.
+        if (LocationName == "Farm" && !string.IsNullOrEmpty(ContentFolder)
+            && FarmhouseSprite.TryGetSprite(ContentFolder, HouseUpgradeLevel, out var houseBitmap, out var houseSource))
+        {
+            var (houseTileX, houseTileY) = FarmhouseSprite.TopLeftTile(FarmhouseSprite.DefaultEntryTile);
+            var houseScale = tileScale / 16.0;
+            var houseWidth = houseSource.Width * houseScale;
+            var houseHeight = houseSource.Height * houseScale;
+            var houseDest = new Rect(offsetX + houseTileX * tileScale, offsetY + houseTileY * tileScale, houseWidth, houseHeight);
+            context.DrawImage(houseBitmap, houseSource, houseDest);
         }
 
         foreach (var layer in afterEntityLayers)

@@ -234,19 +234,101 @@
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding SelectedLocationName}"
+                                                          HouseUpgradeLevel="{Binding HouseUpgradeLevel}"
                                                           MinHeight="400"/>
                             </DockPanel>
 
-                            <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="10">
-                                <TextBlock Text="Selected entity" FontWeight="Bold" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
-                                <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
-                                <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
-                                <Button Content="Remove" Command="{Binding RemoveSelectedCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                            <ScrollViewer Grid.Column="1" Margin="16,0,0,0">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Selected entity" FontWeight="Bold" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                    <TextBlock Text="{Binding Selected.Label}" TextWrapping="Wrap" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                    <TextBlock Text="{Binding Selected.Position, StringFormat='Tile: {0}'}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
 
-                                <TextBlock Text="Tile info" FontWeight="Bold" Margin="0,10,0,0"
-                                           IsVisible="{Binding #FarmMap.SelectedTileInfo, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
-                                <TextBlock Text="{Binding #FarmMap.SelectedTileInfo}" TextWrapping="Wrap" FontFamily="monospace" FontSize="11"/>
-                            </StackPanel>
+                                    <ContentControl Content="{Binding SelectedDetails}">
+                                        <ContentControl.DataTemplates>
+
+                                            <DataTemplate DataType="vm:TreeDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding TreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding GrowthStage}" Minimum="0" Maximum="4" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="10" Width="180"/></StackPanel>
+                                                    <CheckBox Content="Stump" IsChecked="{Binding Stump}"/>
+                                                    <CheckBox Content="Tapped" IsChecked="{Binding Tapped}"/>
+                                                    <CheckBox Content="Flipped" IsChecked="{Binding Flipped}"/>
+                                                    <CheckBox Content="Has seed" IsChecked="{Binding HasSeed}"/>
+                                                    <CheckBox Content="Fertilized" IsChecked="{Binding Fertilized}"/>
+                                                    <CheckBox Content="Shake left" IsChecked="{Binding ShakeLeft}"/>
+                                                    <TextBlock Text="Species names are best-effort, not verified against real save data (see README)."
+                                                               Opacity="0.7" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:GrassDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field"><TextBlock Text="Type"/><ComboBox ItemsSource="{Binding GrassTypes}" SelectedItem="{Binding SelectedGrassType}" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Weeds"/><NumericUpDown Value="{Binding NumberOfWeeds}" Minimum="0" Maximum="4" Width="180"/></StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:HoeDirtDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field"><TextBlock Text="State"/><ComboBox ItemsSource="{Binding States}" SelectedItem="{Binding SelectedState}" Width="180"/></StackPanel>
+                                                    <CheckBox Content="Greenhouse dirt" IsChecked="{Binding IsGreenhouseDirt}"/>
+
+                                                    <ContentControl Content="{Binding Crop}" IsVisible="{Binding Crop, Converter={x:Static conv:ObjectConverters.IsNotNull}}" Margin="0,8,0,0">
+                                                        <ContentControl.DataTemplates>
+                                                            <DataTemplate DataType="vm:CropDetailsViewModel">
+                                                                <Border BorderBrush="Gray" BorderThickness="0,1,0,0" Padding="0,8,0,0">
+                                                                    <StackPanel Spacing="6">
+                                                                        <TextBlock Text="Crop" FontWeight="Bold"/>
+                                                                        <StackPanel Classes="field"><TextBlock Text="Growth phase"/><NumericUpDown Value="{Binding CurrentPhase}" Minimum="0" Maximum="6" Width="180"/></StackPanel>
+                                                                        <StackPanel Classes="field"><TextBlock Text="Day of phase"/><NumericUpDown Value="{Binding DayOfCurrentPhase}" Minimum="0" Maximum="99" Width="180"/></StackPanel>
+                                                                        <StackPanel Classes="field"><TextBlock Text="Min harvest"/><NumericUpDown Value="{Binding MinHarvest}" Minimum="0" Maximum="10" Width="180"/></StackPanel>
+                                                                        <StackPanel Classes="field"><TextBlock Text="Max harvest"/><NumericUpDown Value="{Binding MaxHarvest}" Minimum="0" Maximum="10" Width="180"/></StackPanel>
+                                                                        <StackPanel Classes="field"><TextBlock Text="Regrow after"/><NumericUpDown Value="{Binding RegrowAfterHarvest}" Minimum="-1" Maximum="99" Width="180"/></StackPanel>
+                                                                        <CheckBox Content="Fully grown" IsChecked="{Binding FullGrown}"/>
+                                                                        <CheckBox Content="Dead" IsChecked="{Binding Dead}"/>
+                                                                        <CheckBox Content="Flip" IsChecked="{Binding Flip}"/>
+                                                                        <TextBlock Text="{Binding SeedIndex, StringFormat='Seed item id: {0} (read-only)'}" Opacity="0.7"/>
+                                                                        <TextBlock Text="{Binding IndexOfHarvest, StringFormat='Harvest item id: {0} (read-only)'}" Opacity="0.7"/>
+                                                                        <Button Content="Remove crop (keep tilled soil)" Command="{Binding RemoveCropCommand}"/>
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ContentControl.DataTemplates>
+                                                    </ContentControl>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:ResourceClumpDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field"><TextBlock Text="Sprite index"/><NumericUpDown Value="{Binding ParentSheetIndex}" Minimum="0" Maximum="999" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="99" Width="180"/></StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:PlacedObjectDetailsViewModel">
+                                                <StackPanel Spacing="6" DataContext="{Binding Item}">
+                                                    <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180" IsEnabled="{Binding HasQuality}"/></StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:BuildingDetailsViewModel">
+                                                <TextBlock Text="Building field names aren't verified against real save data yet (see README) - nothing here is safely editable."
+                                                           Opacity="0.7" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+
+                                        </ContentControl.DataTemplates>
+                                    </ContentControl>
+
+                                    <Button Content="Remove" Command="{Binding SelectedDetails.RemoveCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+
+                                    <TextBlock Text="Tile info" FontWeight="Bold" Margin="0,10,0,0"
+                                               IsVisible="{Binding #FarmMap.SelectedTileInfo, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
+                                    <TextBlock Text="{Binding #FarmMap.SelectedTileInfo}" TextWrapping="Wrap" FontFamily="monospace" FontSize="11"/>
+                                </StackPanel>
+                            </ScrollViewer>
                         </Grid>
                     </TabItem>
 

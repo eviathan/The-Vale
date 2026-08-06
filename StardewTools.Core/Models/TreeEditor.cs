@@ -48,5 +48,29 @@ public sealed class TreeEditor
         set => _feature.SetChildBool("tapped", value);
     }
 
+    public bool Flipped
+    {
+        get => _feature.GetChildBool("flipped");
+        set => _feature.SetChildBool("flipped", value);
+    }
+
+    public bool HasSeed
+    {
+        get => _feature.GetChildBool("hasSeed");
+        set => _feature.SetChildBool("hasSeed", value);
+    }
+
+    public bool Fertilized
+    {
+        get => _feature.GetChildBool("fertilized");
+        set => _feature.SetChildBool("fertilized", value);
+    }
+
+    public bool ShakeLeft
+    {
+        get => _feature.GetChildBool("shakeLeft");
+        set => _feature.SetChildBool("shakeLeft", value);
+    }
+
     internal XElement Item => _feature.Parent!.Parent!;
 }

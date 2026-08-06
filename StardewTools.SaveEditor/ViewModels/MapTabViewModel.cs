@@ -17,12 +17,14 @@ public partial class MapTabViewModel : ViewModelBase
     private List<MapEntitySummary> _farmEntitiesCache = new();
 
     [ObservableProperty] private MapEntitySummary? _selected;
+    [ObservableProperty] private MapEntityDetailsViewModel? _selectedDetails;
     [ObservableProperty] private string _season = "";
     [ObservableProperty] private string _summary = "";
     [ObservableProperty] private string _contentFolder = "";
     [ObservableProperty] private string _extractStatus = "";
     [ObservableProperty] private bool _isExtracting;
     [ObservableProperty] private string _selectedLocationName = "Farm";
+    [ObservableProperty] private int _houseUpgradeLevel;
 
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
@@ -49,6 +51,64 @@ public partial class MapTabViewModel : ViewModelBase
         settings.Save();
     }
 
+    partial void OnSelectedChanged(MapEntitySummary? value)
+    {
+        // Editing a field reassigns Selected to a fresh MapEntitySummary wrapping the *same*
+        // underlying Source editor (see OnEntityEdited) purely to fire FarmMapControl's
+        // AffectsRender - rebuilding SelectedDetails from scratch on every keystroke would
+        // reset the panel (losing focus/cursor mid-edit) for no reason, so only rebuild when
+        // the selected entity actually changed.
+        if (value is not null && SelectedDetails is not null && ReferenceEquals(SelectedDetails.Summary.Source, value.Source))
+            return;
+
+        SelectedDetails = value switch
+        {
+            null => null,
+            { Kind: MapEntityKind.Tree, Source: TreeEditor t } => new TreeDetailsViewModel(value, t, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Grass, Source: GrassEditor g } => new GrassDetailsViewModel(value, g, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.HoeDirt, Source: HoeDirtEditor d } => new HoeDirtDetailsViewModel(value, d, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.ResourceClump, Source: ResourceClumpEditor c } => new ResourceClumpDetailsViewModel(value, c, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity),
+            _ => null,
+        };
+    }
+
+    private void OnEntityEdited(MapEntityDetailsViewModel details)
+    {
+        var fresh = details.Resummarize();
+        var oldSummary = details.Summary;
+
+        var idx = Entities.IndexOf(oldSummary);
+        if (idx >= 0) Entities[idx] = fresh;
+
+        var cacheIdx = _farmEntitiesCache.IndexOf(oldSummary);
+        if (cacheIdx >= 0) _farmEntitiesCache[cacheIdx] = fresh;
+
+        details.Summary = fresh;
+        Selected = fresh; // different reference -> AffectsRender fires -> map redraws with the edit
+    }
+
+    private void RemoveEntity(MapEntitySummary entity)
+    {
+        if (_map is null)
+            return;
+
+        switch (entity.Source)
+        {
+            case TreeEditor tree: _map.Remove(tree); break;
+            case GrassEditor grass: _map.Remove(grass); break;
+            case HoeDirtEditor dirt: _map.Remove(dirt); break;
+            case ResourceClumpEditor clump: _map.Remove(clump); break;
+            case PlacedObjectEditor obj: _map.Remove(obj); break;
+            case BuildingEditor building: _map.Remove(building); break;
+        }
+
+        Entities.Remove(entity);
+        _farmEntitiesCache.Remove(entity);
+        Selected = null;
+    }
+
     partial void OnSelectedLocationNameChanged(string value)
     {
         Selected = null;
@@ -65,6 +125,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         _map = save.Map;
         Season = save.Season;
+        HouseUpgradeLevel = save.Player.HouseUpgradeLevel;
         Selected = null;
 
         AvailableLocations.Clear();
@@ -75,6 +136,7 @@ public partial class MapTabViewModel : ViewModelBase
         _farmEntitiesCache = new List<MapEntitySummary>();
         foreach (var tree in _map.Trees) _farmEntitiesCache.Add(MapEntitySummary.FromTree(tree));
         foreach (var grass in _map.Grass) _farmEntitiesCache.Add(MapEntitySummary.FromGrass(grass));
+        foreach (var dirt in _map.HoeDirtTiles) _farmEntitiesCache.Add(MapEntitySummary.FromHoeDirt(dirt));
         foreach (var clump in _map.ResourceClumps) _farmEntitiesCache.Add(MapEntitySummary.FromClump(clump));
         foreach (var obj in _map.Objects) _farmEntitiesCache.Add(MapEntitySummary.FromObject(obj));
         foreach (var building in _map.Buildings) _farmEntitiesCache.Add(MapEntitySummary.FromBuilding(building));
@@ -117,23 +179,4 @@ public partial class MapTabViewModel : ViewModelBase
         }
     }
 
-    [RelayCommand]
-    private void RemoveSelected()
-    {
-        if (_map is null || Selected is not { } entity)
-            return;
-
-        switch (entity.Source)
-        {
-            case TreeEditor tree: _map.Remove(tree); break;
-            case GrassEditor grass: _map.Remove(grass); break;
-            case ResourceClumpEditor clump: _map.Remove(clump); break;
-            case PlacedObjectEditor obj: _map.Remove(obj); break;
-            case BuildingEditor building: _map.Remove(building); break;
-        }
-
-        Entities.Remove(entity);
-        _farmEntitiesCache.Remove(entity);
-        Selected = null;
-    }
 }

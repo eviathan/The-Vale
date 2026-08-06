@@ -95,6 +95,45 @@ public static class GameEnums
         [34] = "Full Shipment",
     };
 
+    /// <summary>
+    /// Not verified against real save data beyond confirming treeType is an int (TreeEditor
+    /// remarks) - only 1/2/3 are confirmed to have real sprite art (TreeSprites.KnownTypeFiles).
+    /// Everything else here is general Stardew modding knowledge, not cross-checked.
+    /// </summary>
+    public static readonly IReadOnlyList<NamedValue> TreeTypes = new[]
+    {
+        new NamedValue(1, "Oak"),
+        new NamedValue(2, "Maple"),
+        new NamedValue(3, "Pine"),
+        new NamedValue(6, "Desert palm"),
+        new NamedValue(7, "Mushroom tree"),
+        new NamedValue(8, "Mahogany"),
+        new NamedValue(9, "Green rain (Oak)"),
+        new NamedValue(10, "Green rain (Maple)"),
+        new NamedValue(11, "Green rain (Pine)"),
+        new NamedValue(13, "Mystic tree"),
+    };
+
+    /// <summary>Confirmed field (HoeDirtEditor.State is an int); the 0/1/2 meanings are
+    /// general modding knowledge, not save-verified per value.</summary>
+    public static readonly IReadOnlyList<NamedValue> HoeDirtStates = new[]
+    {
+        new NamedValue(0, "Dry"),
+        new NamedValue(1, "Watered"),
+        new NamedValue(2, "Paddy"),
+    };
+
+    /// <summary>Cross-references GrassSprites.SourceOffsetY's already sprite-verified mapping.</summary>
+    public static readonly IReadOnlyList<NamedValue> GrassTypes = new[]
+    {
+        new NamedValue(1, "Normal (outdoor)"),
+        new NamedValue(2, "Cave"),
+        new NamedValue(3, "Frost"),
+        new NamedValue(4, "Lava"),
+        new NamedValue(5, "Cave 2"),
+        new NamedValue(6, "Cobweb"),
+    };
+
     public static string AchievementLabel(int id)
         => AchievementNames.TryGetValue(id, out var name) ? $"{id} - {name}" : $"{id} - Achievement #{id}";
 
