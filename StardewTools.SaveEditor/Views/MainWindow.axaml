@@ -11,7 +11,7 @@
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="StardewTools"
-        Width="960" Height="740" MinWidth="820" MinHeight="600">
+        Width="1680" Height="1000" MinWidth="820" MinHeight="600" WindowStartupLocation="CenterScreen">
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
@@ -237,10 +237,21 @@
                                 </WrapPanel>
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding ExtractStatus}" Opacity="0.7" Margin="0,0,0,6"
                                            IsVisible="{Binding ExtractStatus, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <ToggleButton Content="Select" IsChecked="{Binding IsSelectToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Object" IsChecked="{Binding IsObjectToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Building" IsChecked="{Binding IsBuildingToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Till" IsChecked="{Binding IsTillToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Plant Crop" IsChecked="{Binding IsPlantCropToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Plant Tree" IsChecked="{Binding IsPlantTreeToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Plant Bush" IsChecked="{Binding IsPlantBushToolActive}" Margin="0,0,4,4"/>
+                                    <TextBlock Text="{Binding BrushSize, StringFormat='Brush: {0}x{0} ([ / ] to resize)'}" VerticalAlignment="Center"
+                                               Opacity="0.7" FontSize="11" Margin="8,0,0,4" IsVisible="{Binding IsAnyToolActive}"/>
+                                </WrapPanel>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
                                            Text="{Binding #FarmMap.Status}"/>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.5" FontSize="11" TextWrapping="Wrap"
-                                           Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select."/>
+                                           Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select. [ / ] resizes the draw brush."/>
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding SelectedLocationName}"
@@ -249,6 +260,10 @@
                                                           SelectedRange="{Binding SelectedRange}"
                                                           IsPlacementToolActive="{Binding IsAnyToolActive}"
                                                           MoveRequest="{Binding MoveRequest}"
+                                                          BrushSize="{Binding BrushSize}"
+                                                          HoverFootprintWidth="{Binding HoverFootprintWidth}"
+                                                          HoverFootprintHeight="{Binding HoverFootprintHeight}"
+                                                          CurrentDaysPlayed="{Binding CurrentDaysPlayed}"
                                                           MinHeight="400"/>
                             </DockPanel>
 
@@ -263,50 +278,76 @@
                                         <Button Content="{Binding SelectedRange.Count, StringFormat='Remove Selected ({0})'}" Command="{Binding RemoveRangeCommand}"/>
                                     </StackPanel>
 
-                                    <TextBlock Text="Place item" FontWeight="Bold"/>
-                                    <TextBlock Text="{Binding ClickedTile, StringFormat='At tile: {0}', TargetNullValue='Click a tile on the map first'}"
-                                               Opacity="0.7" TextWrapping="Wrap"/>
-                                    <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableItems}" SelectedItem="{Binding SelectedPlaceableItem}"
-                                                      FilterMode="Contains" Watermark="Search items...">
-                                        <AutoCompleteBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                                    <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
-                                                           Width="20" Height="20" Stretch="Uniform"/>
-                                                    <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </AutoCompleteBox.ItemTemplate>
-                                    </AutoCompleteBox>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Content="Place" Command="{Binding PlaceObjectCommand}"/>
-                                        <ToggleButton Content="Draw" IsChecked="{Binding IsObjectToolActive}"/>
-                                    </StackPanel>
-                                    <TextBlock Text="Only plain objects (debris, produce, forage, etc.) can be placed so far - trees and animals need their own pickers with type-specific defaults."
-                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
-                                    <TextBlock Text="Draw: click the map to drop the selected item. If the tile is occupied you'll be asked to confirm clearing it first."
-                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11" IsVisible="{Binding IsObjectToolActive}"/>
+                                    <TextBlock Text="Tool properties" FontWeight="Bold" IsVisible="{Binding IsAnyToolActive}"/>
+                                    <TextBlock Text="{Binding ClickedTile, StringFormat='Last click: {0}', TargetNullValue='Click the map to use the active tool'}"
+                                               Opacity="0.7" TextWrapping="Wrap" IsVisible="{Binding IsAnyToolActive}"/>
 
-                                    <TextBlock Text="Place building" FontWeight="Bold" Margin="0,10,0,0"/>
-                                    <ComboBox ItemsSource="{Binding AvailablePlaceableBuildings}" SelectedItem="{Binding SelectedPlaceableBuilding}" HorizontalAlignment="Stretch">
-                                        <ComboBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                                    <Image Source="{Binding Converter={x:Static iconconv:PlaceableBuildingIconConverter.Instance}}"
-                                                           Width="20" Height="20" Stretch="Uniform"/>
-                                                    <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </ComboBox.ItemTemplate>
-                                    </ComboBox>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Content="Place" Command="{Binding PlaceBuildingCommand}"/>
-                                        <ToggleButton Content="Draw" IsChecked="{Binding IsBuildingToolActive}"/>
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsObjectToolActive}">
+                                        <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableItems}" SelectedItem="{Binding SelectedPlaceableItem}"
+                                                          FilterMode="Contains" Watermark="Search items...">
+                                            <AutoCompleteBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                               Width="20" Height="20" Stretch="Uniform"/>
+                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </AutoCompleteBox.ItemTemplate>
+                                        </AutoCompleteBox>
+                                        <TextBlock Text="Only plain objects (debris, produce, forage, etc.) can be placed so far - trees and animals have their own tools."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                        <TextBlock Text="Click the map to drop the selected item. If the tile is occupied you'll be asked to confirm clearing it first."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
                                     </StackPanel>
-                                    <TextBlock Text="Only buildings with no interior (Gold Clock, Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable, Shipping Bin, Junimo Hut) - Barn/Coop/etc. need their interior location verified first."
-                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
-                                    <TextBlock Text="Draw: click the map to drop the selected building. If the footprint is occupied you'll be asked to confirm clearing it first."
-                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11" IsVisible="{Binding IsBuildingToolActive}"/>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsBuildingToolActive}">
+                                        <ComboBox ItemsSource="{Binding AvailablePlaceableBuildings}" SelectedItem="{Binding SelectedPlaceableBuilding}" HorizontalAlignment="Stretch">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <Image Source="{Binding Converter={x:Static iconconv:PlaceableBuildingIconConverter.Instance}}"
+                                                               Width="20" Height="20" Stretch="Uniform"/>
+                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <TextBlock Text="Only buildings with no interior (Gold Clock, Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable, Shipping Bin, Junimo Hut) - Barn/Coop/etc. need their interior location verified first."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                        <TextBlock Text="Click the map to drop the selected building. If the footprint is occupied you'll be asked to confirm clearing it first."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsTillToolActive}">
+                                        <TextBlock Text="Click the map to till a tile (dry, unfertilized). Already-tilled ground is left alone - no confirmation needed."
+                                                   Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsPlantCropToolActive}">
+                                        <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableCrops}" SelectedItem="{Binding SelectedPlaceableCrop}"
+                                                          FilterMode="Contains" Watermark="Search seeds..."/>
+                                        <CheckBox Content="Plant already matured (harvest-ready)" IsChecked="{Binding PlantCropMature}"/>
+                                        <TextBlock Text="Click the map to till (if needed) and plant. Planting into already-bare tilled soil needs no confirmation; anything else in the way does."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsPlantTreeToolActive}">
+                                        <StackPanel Classes="field"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding AvailableTreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
+                                        <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding PlantTreeGrowthStage}" Minimum="0" Maximum="5" Width="180"/></StackPanel>
+                                        <TextBlock Text="Defaults to fully grown (5) - lower it to plant a sapling instead. Click the map to plant."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsPlantBushToolActive}">
+                                        <StackPanel Classes="field"><TextBlock Text="Size"/><ComboBox ItemsSource="{Binding AvailableBushSizes}" SelectedItem="{Binding SelectedBushSize}" Width="180"/></StackPanel>
+                                        <CheckBox Content="Plant already matured (bloom-ready)" IsChecked="{Binding PlantBushMature}"/>
+                                        <TextBlock Text="Medium/large bushes span 2-3 tiles starting at the clicked tile, not centered on it. Click the map to plant."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <TextBlock Text="{Binding PlacementBlockedMessage}" Foreground="#E57373" TextWrapping="Wrap" FontSize="11"
+                                               Margin="0,6,0,0" IsVisible="{Binding PlacementBlockedMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
 
                                     <StackPanel Spacing="6" IsVisible="{Binding PendingPlacement, Converter={x:Static conv:ObjectConverters.IsNotNull}}"
                                                 Margin="0,10,0,0">
@@ -335,7 +376,7 @@
                                             <DataTemplate DataType="vm:TreeDetailsViewModel">
                                                 <StackPanel Spacing="6">
                                                     <StackPanel Classes="field"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding TreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding GrowthStage}" Minimum="0" Maximum="4" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding GrowthStage}" Minimum="0" Maximum="5" Width="180"/></StackPanel>
                                                     <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="10" Width="180"/></StackPanel>
                                                     <CheckBox Content="Stump" IsChecked="{Binding Stump}"/>
                                                     <CheckBox Content="Tapped" IsChecked="{Binding Tapped}"/>
@@ -343,6 +384,8 @@
                                                     <CheckBox Content="Has seed" IsChecked="{Binding HasSeed}"/>
                                                     <CheckBox Content="Fertilized" IsChecked="{Binding Fertilized}"/>
                                                     <CheckBox Content="Shake left" IsChecked="{Binding ShakeLeft}"/>
+                                                    <CheckBox Content="Has moss" IsChecked="{Binding HasMoss}"/>
+                                                    <CheckBox Content="Shaken today" IsChecked="{Binding WasShakenToday}"/>
                                                     <TextBlock Text="Species names are best-effort, not verified against real save data (see README)."
                                                                Opacity="0.7" TextWrapping="Wrap"/>
                                                 </StackPanel>
@@ -400,8 +443,26 @@
                                             </DataTemplate>
 
                                             <DataTemplate DataType="vm:BuildingDetailsViewModel">
-                                                <TextBlock Text="Building field names aren't verified against real save data yet (see README) - nothing here is safely editable."
-                                                           Opacity="0.7" TextWrapping="Wrap"/>
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field" IsVisible="{Binding HasSkins}">
+                                                        <TextBlock Text="Skin"/>
+                                                        <ComboBox ItemsSource="{Binding AvailableSkins}" SelectedItem="{Binding SelectedSkin}" Width="180"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="Most other building fields aren't verified against real save data yet (see README) - not safely editable here."
+                                                               Opacity="0.7" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:BushDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field"><TextBlock Text="Size"/><ComboBox ItemsSource="{Binding BushSizes}" SelectedItem="{Binding SelectedSize}" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="99" Width="180"/></StackPanel>
+                                                    <CheckBox Content="Bloom/harvest ready" IsChecked="{Binding BloomReady}"/>
+                                                    <CheckBox Content="Flipped" IsChecked="{Binding Flipped}"/>
+                                                    <CheckBox Content="Town bush (decorative)" IsChecked="{Binding TownBush}"/>
+                                                    <CheckBox Content="Greenhouse/sheltered" IsChecked="{Binding GreenhouseBush}"/>
+                                                    <CheckBox Content="Draw shadow" IsChecked="{Binding DrawShadow}"/>
+                                                </StackPanel>
                                             </DataTemplate>
 
                                         </ContentControl.DataTemplates>

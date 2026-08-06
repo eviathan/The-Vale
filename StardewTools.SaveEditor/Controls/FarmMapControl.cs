@@ -81,6 +81,27 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<double> PanOffsetTileYProperty =
         AvaloniaProperty.Register<FarmMapControl, double>(nameof(PanOffsetTileY));
 
+    /// <summary>How many tiles square Object/Till/Plant Crop/Plant Tree stamp per click -
+    /// TwoWay so the [ / ] keyboard shortcut here (see OnKeyDown) pushes changes back to the
+    /// ViewModel, which is what actually stamps with it.</summary>
+    public static readonly StyledProperty<int> BrushSizeProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(BrushSize), 1, defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+
+    /// <summary>Size of the hover-preview outline drawn under the cursor while a draw tool is
+    /// armed (see DrawHoverPreview) - the ViewModel sets this to the Building tool's real
+    /// footprint or BrushSize for everything else (see MapTabViewModel.HoverFootprintWidth).
+    /// Purely a rendering hint; not what OnClickedTileChanged/ApplyBrushTool actually stamp with.</summary>
+    public static readonly StyledProperty<int> HoverFootprintWidthProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(HoverFootprintWidth), 1);
+
+    public static readonly StyledProperty<int> HoverFootprintHeightProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(HoverFootprintHeight), 1);
+
+    /// <summary>Player.Stats.DaysPlayed - only used for a tea bush's age-based growth-stage
+    /// sprite (Bush.getAge()). Zero elsewhere has no visible effect.</summary>
+    public static readonly StyledProperty<int> CurrentDaysPlayedProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(CurrentDaysPlayed));
+
     public IEnumerable<MapEntitySummary>? Entities
     {
         get => GetValue(EntitiesProperty);
@@ -192,10 +213,35 @@ public sealed class FarmMapControl : Control
         set => SetValue(PanOffsetTileYProperty, value);
     }
 
+    public int BrushSize
+    {
+        get => GetValue(BrushSizeProperty);
+        set => SetValue(BrushSizeProperty, value);
+    }
+
+    public int HoverFootprintWidth
+    {
+        get => GetValue(HoverFootprintWidthProperty);
+        set => SetValue(HoverFootprintWidthProperty, value);
+    }
+
+    public int HoverFootprintHeight
+    {
+        get => GetValue(HoverFootprintHeightProperty);
+        set => SetValue(HoverFootprintHeightProperty, value);
+    }
+
+    public int CurrentDaysPlayed
+    {
+        get => GetValue(CurrentDaysPlayedProperty);
+        set => SetValue(CurrentDaysPlayedProperty, value);
+    }
+
     static FarmMapControl()
     {
         AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
-            ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty);
+            ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty, IsPlacementToolActiveProperty, HoverFootprintWidthProperty, HoverFootprintHeightProperty,
+            CurrentDaysPlayedProperty);
         FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
         ClipToBoundsProperty.OverrideDefaultValue<FarmMapControl>(true); // at native zoom the map is almost always bigger than the viewport - without this it draws straight over the side panel instead of being cropped to its own column
     }
@@ -222,18 +268,33 @@ public sealed class FarmMapControl : Control
     private string? _loadedFolder;
     private string? _loadedLocation;
     private (double MinX, double MinY, double Scale)? _lastLayout;
+
+    /// <summary>Each entity's actual on-screen bounds from the last real-map render - populated
+    /// fresh every RenderRealMap pass (cleared up front, refilled as each entity is drawn).
+    /// Used for pixel-accurate hit-testing instead of a plain tile-footprint check, since many
+    /// sprites (a tree canopy, a tall building) are drawn far outside their logical footprint -
+    /// hit-testing only the footprint meant most of what's actually visible wasn't clickable.</summary>
+    private readonly Dictionary<MapEntitySummary, Rect> _entityScreenBounds = new();
+
+    /// <summary>Same entities as _entityScreenBounds, in the order they were actually drawn -
+    /// FindEntityAt walks this backwards so an overlap between two sprites resolves to whichever
+    /// was drawn LAST (visually on top, matching the row-interleaved Y-sort draw order), not an
+    /// arbitrary or size-based pick.</summary>
+    private readonly List<MapEntitySummary> _entityDrawOrder = new();
+
     private TilePosition? _dragStartTile;
     private TilePosition? _dragCurrentTile;
     private bool _isDragging;
-    private MapEntitySummary? _dragEntity; // non-null => this drag (once it becomes one) moves this entity instead of marqueeing
-    private int _dragGrabOffsetX;
-    private int _dragGrabOffsetY;
+    private MapEntitySummary? _dragEntity; // non-null => this drag (once it becomes one) moves an entity instead of marqueeing
+    private IReadOnlyList<MapEntitySummary>? _dragGroup; // non-null => the press landed on a SelectedRange member, so the whole group moves together
     private bool _isPainting;
     private TilePosition? _lastPaintedTile;
     private bool _needsViewCentering;
     private bool _spaceHeld;
     private Point? _panStartPoint;
     private (double X, double Y)? _panStartOffset;
+    private Point? _lastPointerPosition;
+    private TilePosition? _hoverTile;
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -258,9 +319,39 @@ public sealed class FarmMapControl : Control
         {
             TryLoadMap();
         }
+
+        if (change.Property == IsPlacementToolActiveProperty)
+            UpdateCursor();
     }
 
     private void OnEntitiesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => InvalidateVisual();
+
+    /// <summary>Cursor communicates interaction mode at a glance: Hand while panning (spacebar
+    /// held or actively panning) or hovering a selectable/draggable entity, Cross while a draw
+    /// tool is armed or hovering empty ground (marquee-select-ready) - so there's always a clear
+    /// "what happens if I click/drag here" signal instead of a generic arrow throughout.</summary>
+    private void UpdateCursor()
+    {
+        if (_spaceHeld || _panStartPoint is not null)
+        {
+            Cursor = new Cursor(StandardCursorType.Hand);
+            return;
+        }
+
+        if (IsPlacementToolActive)
+        {
+            Cursor = new Cursor(StandardCursorType.Cross);
+            return;
+        }
+
+        if (_lastPointerPosition is { } position && _lastLayout is { } layout && FindEntityAt(position, layout) is not null)
+        {
+            Cursor = new Cursor(StandardCursorType.Hand);
+            return;
+        }
+
+        Cursor = new Cursor(StandardCursorType.Cross);
+    }
 
     private void TryLoadMap()
     {
@@ -299,6 +390,54 @@ public sealed class FarmMapControl : Control
 
         DrawMarquee(context);
         DrawMoveGhost(context);
+        DrawRangeHighlights(context);
+        DrawHoverPreview(context);
+    }
+
+    /// <summary>The "effected area" outline under the cursor while a draw tool is armed -
+    /// HoverFootprintWidth/Height (set by the ViewModel: BrushSize for Object/Till/Plant Crop/
+    /// Plant Tree, the real footprint for Building) centered on the hovered tile the same way
+    /// ApplyBrushTool centers its brush, so what's outlined here is exactly what a click would
+    /// affect. Not shown mid-drag (paint/move/marquee already have their own visual feedback).</summary>
+    private void DrawHoverPreview(DrawingContext context)
+    {
+        if (!IsPlacementToolActive || _isPainting || _isDragging || _panStartPoint is not null
+            || _hoverTile is not { } hover || _lastLayout is not { } layout)
+        {
+            return;
+        }
+
+        var width = Math.Max(1, HoverFootprintWidth);
+        var height = Math.Max(1, HoverFootprintHeight);
+        var startX = hover.X - (width - 1) / 2;
+        var startY = hover.Y - (height - 1) / 2;
+
+        var rect = new Rect(
+            (startX - layout.MinX) * layout.Scale,
+            (startY - layout.MinY) * layout.Scale,
+            width * layout.Scale,
+            height * layout.Scale);
+
+        context.FillRectangle(new SolidColorBrush(Color.Parse("#4034D058")), rect);
+        context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#34D058")), 2), rect);
+    }
+
+    /// <summary>Outlines every entity in SelectedRange so a marquee (or bulk) selection stays
+    /// visible on the map itself, not just as a count in the side panel - amber, distinct from
+    /// the single-selection red box and the marquee-drag's blue rectangle. Uses the pixel
+    /// bounds captured for hit-testing (see _entityScreenBounds) so the outline hugs each
+    /// entity's actual sprite, same as what you'd click to select/drag it.</summary>
+    private void DrawRangeHighlights(DrawingContext context)
+    {
+        if (SelectedRange.Count == 0)
+            return;
+
+        var pen = new Pen(new SolidColorBrush(Color.Parse("#FFC107")), 2);
+        foreach (var entity in SelectedRange)
+        {
+            if (_entityScreenBounds.TryGetValue(entity, out var bounds))
+                context.DrawRectangle(pen, new Rect(bounds.X - 2, bounds.Y - 2, bounds.Width + 4, bounds.Height + 4));
+        }
     }
 
     /// <summary>The live rectangle overlay while a drag-select is in progress - drawn after
@@ -325,33 +464,41 @@ public sealed class FarmMapControl : Control
         context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#3B82F6")), 2), rect);
     }
 
-    /// <summary>Translucent preview of a dragged entity at its would-land tile, following the
-    /// cursor - the original stays drawn normally at its current (not-yet-moved) position via
-    /// the regular entity loop, so a drag shows both "where it is" and "where it'll go" like a
-    /// normal drag-and-drop. _dragGrabOffsetX/Y (captured at press time) keeps the entity's
-    /// footprint anchored under wherever it was actually grabbed, not snapped so its top-left
-    /// tile jumps to the cursor.</summary>
+    /// <summary>Translucent preview of the dragged entity (or, for a group drag, every member)
+    /// at its would-land tile, following the cursor - the original(s) stay drawn normally at
+    /// their current (not-yet-moved) position via the regular entity loop, so a drag shows both
+    /// "where it is" and "where it'll go" like a normal drag-and-drop. Every ghost moves by the
+    /// same tile delta (current - start), which is what keeps a dragged group rigid - applying
+    /// one uniform delta to each member's own original position is equivalent to (and simpler
+    /// than) tracking a per-entity grab offset.</summary>
     private void DrawMoveGhost(DrawingContext context)
     {
-        if (_dragEntity is not { } entity || !_isDragging || _lastLayout is not { } layout || _dragCurrentTile is not { } current)
+        if (_dragEntity is null || !_isDragging || _lastLayout is not { } layout
+            || _dragStartTile is not { } start || _dragCurrentTile is not { } current)
             return;
 
-        var target = ClampFootprint(new TilePosition(current.X - _dragGrabOffsetX, current.Y - _dragGrabOffsetY), entity.Width, entity.Height);
-
-        var ghost = new MapEntitySummary
-        {
-            Position = target,
-            Kind = entity.Kind,
-            Label = entity.Label,
-            ColorHex = entity.ColorHex,
-            Source = entity.Source,
-            Width = entity.Width,
-            Height = entity.Height,
-        };
-
+        var deltaX = current.X - start.X;
+        var deltaY = current.Y - start.Y;
         var pixelOffsetX = -layout.MinX * layout.Scale;
         var pixelOffsetY = -layout.MinY * layout.Scale;
-        DrawSingleEntity(context, ghost, pixelOffsetX, pixelOffsetY, layout.Scale, opacity: 0.55);
+
+        foreach (var entity in _dragGroup ?? (IReadOnlyList<MapEntitySummary>)[_dragEntity])
+        {
+            var target = ClampFootprint(new TilePosition(entity.Position.X + deltaX, entity.Position.Y + deltaY), entity.Width, entity.Height);
+
+            var ghost = new MapEntitySummary
+            {
+                Position = target,
+                Kind = entity.Kind,
+                Label = entity.Label,
+                ColorHex = entity.ColorHex,
+                Source = entity.Source,
+                Width = entity.Width,
+                Height = entity.Height,
+            };
+
+            DrawSingleEntity(context, ghost, pixelOffsetX, pixelOffsetY, layout.Scale, opacity: 0.55, recordBounds: false);
+        }
     }
 
     private TilePosition ClampFootprint(TilePosition position, int width, int height)
@@ -366,6 +513,10 @@ public sealed class FarmMapControl : Control
 
     private void RenderRealMap(DrawingContext context, TmxMap map, MapAssetLoader loader)
     {
+        // Repopulated fresh below as each entity is actually drawn - see _entityScreenBounds.
+        _entityScreenBounds.Clear();
+        _entityDrawOrder.Clear();
+
         var tileScale = 16.0 * Zoom; // 16 = native texture px/tile; Zoom=4 (the default) matches the game's own 4x pixel-art scale, i.e. "native resolution"
 
         // A freshly-loaded map gets centered once (same math the old fit-to-bounds path used,
@@ -469,10 +620,15 @@ public sealed class FarmMapControl : Control
             }
         }
 
-        // The farmhouse isn't a placed Building - it's not in Entities at all, see
-        // FarmhouseSprite - so it needs its own draw call rather than going through the
-        // per-row entity loop above.
-        if (LocationName == "Farm" && !string.IsNullOrEmpty(ContentFolder)
+        // A "Farmhouse" Building (see TryDrawBuildingSprite's Farmhouse case) draws through the
+        // normal per-row entity loop above like everything else, and is what makes it
+        // selectable/draggable. This is a fallback ONLY for the case that Building doesn't
+        // exist yet - MapTabViewModel.Bind materializes one for every save on load (see
+        // FarmMapEditor.AddFarmhouse), so in practice this rarely fires, but a location bound
+        // without going through that Bind() (a render-only consumer, a test harness) still
+        // shouldn't render an empty lot where the player's house obviously stands.
+        var hasFarmhouseBuilding = allEntities.Any(e => e.Kind == MapEntityKind.Building && e.Source is BuildingEditor { BuildingType: "Farmhouse" });
+        if (!hasFarmhouseBuilding && LocationName == "Farm" && !string.IsNullOrEmpty(ContentFolder)
             && FarmhouseSprite.TryGetSprite(ContentFolder, HouseUpgradeLevel, out var houseBitmap, out var houseSource))
         {
             var (houseTileX, houseTileY) = FarmhouseSprite.TopLeftTile(FarmhouseSprite.DefaultEntryTile);
@@ -545,15 +701,28 @@ public sealed class FarmMapControl : Control
     /// tile coordinates to screen pixels (already includes any letterbox centering);
     /// <paramref name="scale"/> is screen pixels per tile. <paramref name="opacity"/> lets an
     /// occluding entity be drawn translucent so a selection behind it stays visible.
+    /// <paramref name="recordBounds"/> is false for the throwaway ghost summaries DrawMoveGhost
+    /// draws during a drag - real entities record their drawn Rect into _entityScreenBounds for
+    /// hit-testing (see FindEntityAt); a ghost isn't a key anything looks up.
     /// </summary>
-    private void DrawSingleEntity(DrawingContext context, MapEntitySummary entity, double pixelOffsetX, double pixelOffsetY, double scale, double opacity = 1.0)
+    private void DrawSingleEntity(DrawingContext context, MapEntitySummary entity, double pixelOffsetX, double pixelOffsetY, double scale, double opacity = 1.0, bool recordBounds = true)
     {
         using var opacityScope = context.PushOpacity(opacity);
 
+        void Record(Rect bounds)
+        {
+            if (!recordBounds)
+                return;
+
+            _entityScreenBounds[entity] = bounds;
+            _entityDrawOrder.Add(entity);
+        }
+
         if (entity.Kind == MapEntityKind.Tree && entity.Source is TreeEditor tree
             && !string.IsNullOrEmpty(ContentFolder)
-            && TryDrawTreeSprite(context, tree, entity.Position, pixelOffsetX, pixelOffsetY, scale))
+            && TryDrawTreeSprite(context, tree, entity.Position, pixelOffsetX, pixelOffsetY, scale, out var treeBounds))
         {
+            Record(treeBounds);
             return;
         }
 
@@ -568,7 +737,9 @@ public sealed class FarmMapControl : Control
             var ch = craftableSource.Height * pixelsPerSourcePixel;
             var cx = pixelOffsetX + entity.Position.X * scale + scale / 2 - cw / 2;
             var cy = pixelOffsetY + entity.Position.Y * scale + scale - ch;
-            context.DrawImage(craftableBitmap, craftableSource, new Rect(cx, cy, cw, ch));
+            var craftableRect = new Rect(cx, cy, cw, ch);
+            context.DrawImage(craftableBitmap, craftableSource, craftableRect);
+            Record(craftableRect);
             return;
         }
 
@@ -578,7 +749,9 @@ public sealed class FarmMapControl : Control
         {
             var ox = pixelOffsetX + entity.Position.X * scale;
             var oy = pixelOffsetY + entity.Position.Y * scale;
-            context.DrawImage(objBitmap, objSource, new Rect(ox, oy, scale, scale));
+            var objRect = new Rect(ox, oy, scale, scale);
+            context.DrawImage(objBitmap, objSource, objRect);
+            Record(objRect);
             return;
         }
 
@@ -588,29 +761,65 @@ public sealed class FarmMapControl : Control
         {
             var cx = pixelOffsetX + entity.Position.X * scale;
             var cy = pixelOffsetY + entity.Position.Y * scale;
-            context.DrawImage(clumpBitmap, clumpSource, new Rect(cx, cy, clump.Width * scale, clump.Height * scale));
+            var clumpRect = new Rect(cx, cy, clump.Width * scale, clump.Height * scale);
+            context.DrawImage(clumpBitmap, clumpSource, clumpRect);
+            Record(clumpRect);
             return;
         }
 
         if (entity.Kind == MapEntityKind.Building && entity.Source is BuildingEditor building
             && !string.IsNullOrEmpty(ContentFolder)
-            && TryDrawBuildingSprite(context, building, entity.Position, entity.Width, entity.Height, pixelOffsetX, pixelOffsetY, scale))
+            && TryDrawBuildingSprite(context, building, entity.Position, entity.Width, entity.Height, pixelOffsetX, pixelOffsetY, scale, out var buildingBounds))
         {
+            Record(buildingBounds);
             return;
         }
 
         if (entity.Kind == MapEntityKind.Grass && entity.Source is GrassEditor grass
-            && !string.IsNullOrEmpty(ContentFolder)
-            && GrassSprites.TryGetSprite(ContentFolder, grass.GrassType, Season, entity.Position.X, entity.Position.Y, out var grassBitmap, out var grassSource))
+            && !string.IsNullOrEmpty(ContentFolder) && GrassSprites.TryGetBitmap(ContentFolder, out var grassBitmap))
         {
-            // Grass tufts are taller than one tile and rooted at the ground, same anchoring as
-            // tree canopies (TryDrawTreeSprite) - bottom-center of the tile, not top-left.
+            // Real grass is NumberOfWeeds (1-4) independently-scattered tufts, not one graphic -
+            // see GrassSprites.GetTufts. Each tuft is bottom-anchored off the tile's own bottom-
+            // center (same convention as tree canopies) plus its own small scatter offset.
+            var tufts = GrassSprites.GetTufts(grass.GrassType, Season, entity.Position.X, entity.Position.Y, grass.NumberOfWeeds);
             var pixelsPerSourcePixel = scale / 16.0;
-            var gw = grassSource.Width * pixelsPerSourcePixel;
-            var gh = grassSource.Height * pixelsPerSourcePixel;
-            var gx = pixelOffsetX + entity.Position.X * scale + scale / 2 - gw / 2;
-            var gy = pixelOffsetY + entity.Position.Y * scale + scale - gh;
-            context.DrawImage(grassBitmap, grassSource, new Rect(gx, gy, gw, gh));
+            var tileCenterX = pixelOffsetX + entity.Position.X * scale + scale / 2;
+            var tileBottom = pixelOffsetY + entity.Position.Y * scale + scale;
+
+            double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+            foreach (var tuft in tufts)
+            {
+                var tw = tuft.Source.Width * pixelsPerSourcePixel;
+                var th = tuft.Source.Height * pixelsPerSourcePixel;
+                var tx = tileCenterX + tuft.OffsetTileX * scale - tw / 2;
+                var ty = tileBottom + tuft.OffsetTileY * scale - th;
+                var tuftRect = new Rect(tx, ty, tw, th);
+
+                if (tuft.Flip)
+                {
+                    using (context.PushTransform(FlipHorizontalAround(tuftRect)))
+                        context.DrawImage(grassBitmap, tuft.Source, tuftRect);
+                }
+                else
+                {
+                    context.DrawImage(grassBitmap, tuft.Source, tuftRect);
+                }
+
+                minX = Math.Min(minX, tuftRect.X);
+                minY = Math.Min(minY, tuftRect.Y);
+                maxX = Math.Max(maxX, tuftRect.Right);
+                maxY = Math.Max(maxY, tuftRect.Bottom);
+            }
+
+            Record(new Rect(minX, minY, maxX - minX, maxY - minY));
+            return;
+        }
+
+        if (entity.Kind == MapEntityKind.Bush && entity.Source is BushEditor bush
+            && !string.IsNullOrEmpty(ContentFolder)
+            && TryDrawBushSprite(context, bush, entity.Position, pixelOffsetX, pixelOffsetY, scale, out var bushBounds))
+        {
+            Record(bushBounds);
             return;
         }
 
@@ -628,6 +837,7 @@ public sealed class FarmMapControl : Control
         var outline = new Pen(Brushes.Black, Math.Max(0.5, scale * 0.08));
         context.FillRectangle(brush, rect);
         context.DrawRectangle(outline, rect);
+        Record(rect);
 
         if (ReferenceEquals(entity, Selected))
         {
@@ -637,17 +847,15 @@ public sealed class FarmMapControl : Control
     }
 
     /// <summary>
-    /// Draws a real adult tree sprite anchored at the tile's bottom-center (matching how the
-    /// game positions trees - trunk base on the tile, canopy extending up and to both sides).
-    /// Always uses the adult sprite regardless of the tree's actual growth stage - we don't
-    /// have verified sapling/bush-stage frame coordinates yet, so a grown tree in the right
-    /// place beats an accurate-stage square marker. Returns false (caller falls back to the
+    /// Draws a tree's current-growth-stage sprite anchored at the tile's bottom-center (matching
+    /// how the game positions trees - base on the tile, canopy extending up and to both sides).
+    /// Stages 0-4 use TreeSprites.TryGetGrowthStageSprite (entirely different, smaller sprites -
+    /// not a scaled-down adult), stage 5 uses TryGetAdultSprite gated on the tree's real HasMoss
+    /// field, and a stump uses TryGetStumpSprite - the three are mutually exclusive, matching
+    /// Tree.draw()'s own growthStage/stump branching. Returns false (caller falls back to the
     /// marker) for tree types we haven't mapped to a real sprite sheet.
     /// </summary>
-    /// <summary>A tree is a two-part sprite (canopy on top of a trunk) when standing, or just
-    /// the stump alone once chopped (tree.Stump) - never both, and never the full tree while
-    /// stumped. See TreeSprites.TryGetStumpSprite for where the stump rect comes from.</summary>
-    private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale)
+    private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
     {
         bool found;
         Bitmap bitmap;
@@ -657,14 +865,20 @@ public sealed class FarmMapControl : Control
         {
             found = TreeSprites.TryGetStumpSprite(ContentFolder!, tree.TreeType, Season, out bitmap, out source);
         }
+        else if (tree.GrowthStage < 5)
+        {
+            found = TreeSprites.TryGetGrowthStageSprite(ContentFolder!, tree.TreeType, Season, tree.GrowthStage, out bitmap, out source);
+        }
         else
         {
-            var variant = (position.X * 3 + position.Y * 7) % 2;
-            found = TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, variant, out bitmap, out source);
+            found = TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, tree.HasMoss, out bitmap, out source);
         }
 
         if (!found)
+        {
+            drawnBounds = default;
             return false;
+        }
 
         var pixelsPerSourcePixel = scale / 16.0;
         var width = source.Width * pixelsPerSourcePixel;
@@ -674,7 +888,77 @@ public sealed class FarmMapControl : Control
         var tileBottom = pixelOffsetY + position.Y * scale + scale;
         var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
 
-        context.DrawImage(bitmap, source, dest);
+        // Every tree/stump draw in the real game passes flipped ? SpriteEffects.FlipHorizontally
+        // : None (Tree.cs) - Tree.Flipped is a real, persisted per-tree field (randomized once
+        // at creation, already editable in the details panel) that previously had zero visual
+        // effect since nothing here ever read it.
+        if (tree.Flipped)
+        {
+            using (context.PushTransform(FlipHorizontalAround(dest)))
+                context.DrawImage(bitmap, source, dest);
+        }
+        else
+        {
+            context.DrawImage(bitmap, source, dest);
+        }
+
+        drawnBounds = dest;
+        return true;
+    }
+
+    /// <summary>Mirrors whatever's drawn within <paramref name="rect"/> around the rect's own
+    /// vertical centerline - Avalonia's DrawingContext has no SpriteEffects.FlipHorizontally
+    /// equivalent, so this is the matrix-transform substitute: negate X, then translate back so
+    /// the rect's own footprint doesn't move (only its contents mirror in place).</summary>
+    private static Matrix FlipHorizontalAround(Rect rect)
+    {
+        var centerX = rect.X + rect.Width / 2;
+        return new Matrix(-1, 0, 0, 1, 2 * centerX, 0);
+    }
+
+    /// <summary>
+    /// Draws a bush anchored bottom-left of its placement tile, growing rightward and upward -
+    /// transcribed from the decompiled Bush.draw()'s own anchor math (Vector2 position/origin
+    /// passed to SpriteBatch.Draw), not guessed. Working through that formula algebraically
+    /// (position - origin*scale, for every size/townBush/size==4 combination) shows the sprite's
+    /// left edge always lands exactly on the tile's left edge and its bottom edge always lands
+    /// exactly on the tile's bottom edge, regardless of size - the game's own per-size vertical
+    /// "raise by one tile" logic (getEffectiveSize() > 0 && ...) exists purely to compensate for
+    /// the taller sizes' taller source rects and cancels out to the same bottom-anchor every
+    /// time. So this needs none of that branching - it's the same bottom-anchored, left-aligned
+    /// rect math as everything else here, just without horizontal centering (a medium/large bush
+    /// spans 2-3 tiles starting at its own placement tile, not centered on it).
+    /// </summary>
+    private bool TryDrawBushSprite(DrawingContext context, BushEditor bush, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
+    {
+        var season = bush.GreenhouseBush ? "spring" : Season;
+        var ageInDays = Math.Max(0, CurrentDaysPlayed - bush.DatePlanted);
+
+        if (!BushSprites.TryGetSprite(ContentFolder!, bush.Size, season, bush.TileSheetOffset, bush.TownBush, ageInDays, out var bitmap, out var source))
+        {
+            drawnBounds = default;
+            return false;
+        }
+
+        var pixelsPerSourcePixel = scale / 16.0;
+        var width = source.Width * pixelsPerSourcePixel;
+        var height = source.Height * pixelsPerSourcePixel;
+
+        var tileLeft = pixelOffsetX + position.X * scale;
+        var tileBottom = pixelOffsetY + position.Y * scale + scale;
+        var dest = new Rect(tileLeft, tileBottom - height, width, height);
+
+        if (bush.Flipped)
+        {
+            using (context.PushTransform(FlipHorizontalAround(dest)))
+                context.DrawImage(bitmap, source, dest);
+        }
+        else
+        {
+            context.DrawImage(bitmap, source, dest);
+        }
+
+        drawnBounds = dest;
         return true;
     }
 
@@ -684,13 +968,31 @@ public sealed class FarmMapControl : Control
     /// footprint, same reasoning as trees: building art extends upward from its base (walls +
     /// roof) taller than the footprint itself.
     /// </summary>
-    private bool TryDrawBuildingSprite(DrawingContext context, BuildingEditor building, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale)
+    private bool TryDrawBuildingSprite(DrawingContext context, BuildingEditor building, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
     {
         if (building.BuildingType == "Fish Pond")
-            return TryDrawFishPondSprite(context, position, width, height, pixelOffsetX, pixelOffsetY, scale);
+            return TryDrawFishPondSprite(context, position, width, height, pixelOffsetX, pixelOffsetY, scale, out drawnBounds);
 
-        if (!BuildingSprites.TryGetSprite(ContentFolder!, building.BuildingType, out var bitmap, out var source))
+        Bitmap bitmap;
+        Rect source;
+        if (building.BuildingType == "Farmhouse")
+        {
+            // The exterior varies by the player's house upgrade level (a Player field, not a
+            // building field), not season - verified against the decompiled
+            // Building.getSourceRect(): for a Building whose interior is a FarmHouse, the source
+            // rect's row is upgradeLevel (capped at 2, so level 3 reuses level 2's exterior),
+            // never SeasonOffset. FarmhouseSprite already ports that exact formula.
+            if (!FarmhouseSprite.TryGetSprite(ContentFolder!, HouseUpgradeLevel, out bitmap, out source))
+            {
+                drawnBounds = default;
+                return false;
+            }
+        }
+        else if (!BuildingSprites.TryGetSprite(ContentFolder!, building.BuildingType, building.SkinId, Season, out bitmap, out source))
+        {
+            drawnBounds = default;
             return false;
+        }
 
         var pixelsPerSourcePixel = scale / 16.0;
         var destWidth = source.Width * pixelsPerSourcePixel;
@@ -701,6 +1003,7 @@ public sealed class FarmMapControl : Control
         var dest = new Rect(footprintLeft + width * scale / 2 - destWidth / 2, footprintBottom - destHeight, destWidth, destHeight);
 
         context.DrawImage(bitmap, source, dest);
+        drawnBounds = dest;
         return true;
     }
 
@@ -716,10 +1019,13 @@ public sealed class FarmMapControl : Control
     /// netting style the real game also draws are cosmetic layers on top of this and are
     /// skipped - BuildingEditor doesn't track a netting style field yet.
     /// </summary>
-    private bool TryDrawFishPondSprite(DrawingContext context, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale)
+    private bool TryDrawFishPondSprite(DrawingContext context, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
     {
         if (!BuildingSprites.TryGetBitmap(ContentFolder!, "Fish Pond", out var bitmap))
+        {
+            drawnBounds = default;
             return false;
+        }
 
         var pixelsPerSourcePixel = scale / 16.0;
         const double frameSize = 80;
@@ -738,6 +1044,7 @@ public sealed class FarmMapControl : Control
             context.FillRectangle(new SolidColorBrush(Color.FromRgb(60, 126, 150)), dest);
 
         context.DrawImage(bitmap, new Rect(0, 0, frameSize, frameSize), dest);
+        drawnBounds = dest;
         return true;
     }
 
@@ -762,6 +1069,7 @@ public sealed class FarmMapControl : Control
             _panStartPoint = e.GetPosition(this);
             _panStartOffset = (PanOffsetTileX, PanOffsetTileY);
             e.Pointer.Capture(this);
+            UpdateCursor();
             return;
         }
 
@@ -787,13 +1095,11 @@ public sealed class FarmMapControl : Control
         // Whether THIS drag (if it turns into one) moves an entity or marquee-selects is
         // decided right here, from what's under the initial press - not re-evaluated as the
         // drag continues. Pressing on empty space always marquees even if the drag later
-        // crosses over an entity; pressing on an entity always (potentially) moves it.
+        // crosses over an entity; pressing on an entity always (potentially) moves it - the
+        // whole SelectedRange together if the press landed on one of its members, that entity
+        // alone otherwise.
         _dragEntity = FindEntityAt(e.GetPosition(this), layout);
-        if (_dragEntity is { } entity)
-        {
-            _dragGrabOffsetX = tile.X - entity.Position.X;
-            _dragGrabOffsetY = tile.Y - entity.Position.Y;
-        }
+        _dragGroup = _dragEntity is { } hit && SelectedRange.Contains(hit) ? SelectedRange : null;
 
         e.Pointer.Capture(this);
     }
@@ -807,11 +1113,13 @@ public sealed class FarmMapControl : Control
         if (_lastLayout is not { } layout)
             return;
 
+        var position = e.GetPosition(this);
+        _lastPointerPosition = position;
+
         if (_panStartPoint is { } panStart && _panStartOffset is { } panOffset)
         {
-            var current = e.GetPosition(this);
-            PanOffsetTileX = panOffset.X - (current.X - panStart.X) / layout.Scale;
-            PanOffsetTileY = panOffset.Y - (current.Y - panStart.Y) / layout.Scale;
+            PanOffsetTileX = panOffset.X - (position.X - panStart.X) / layout.Scale;
+            PanOffsetTileY = panOffset.Y - (position.Y - panStart.Y) / layout.Scale;
             return;
         }
 
@@ -820,7 +1128,7 @@ public sealed class FarmMapControl : Control
             if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
                 return;
 
-            var paintTile = FloorTile(e.GetPosition(this), layout);
+            var paintTile = FloorTile(position, layout);
             if (paintTile == _lastPaintedTile)
                 return;
 
@@ -829,20 +1137,33 @@ public sealed class FarmMapControl : Control
             return;
         }
 
-        if (_dragStartTile is not { } start)
-            return;
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            return;
+        if (_dragStartTile is { } start)
+        {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                return;
 
-        var tile = FloorTile(e.GetPosition(this), layout);
-        if (!_isDragging && tile != start)
-            _isDragging = true;
+            var tile = FloorTile(position, layout);
+            if (!_isDragging && tile != start)
+                _isDragging = true;
 
-        if (!_isDragging)
+            if (!_isDragging)
+                return;
+
+            _dragCurrentTile = tile;
+            InvalidateVisual(); // redraw the live marquee rectangle
             return;
+        }
 
-        _dragCurrentTile = tile;
-        InvalidateVisual(); // redraw the live marquee rectangle
+        // Idle hover - not panning/painting/dragging. Drives the draw-tool footprint preview
+        // (DrawHoverPreview) and the marquee-vs-selectable-item cursor (UpdateCursor).
+        var hoverTile = FloorTile(position, layout);
+        if (_hoverTile != hoverTile)
+        {
+            _hoverTile = hoverTile;
+            InvalidateVisual();
+        }
+
+        UpdateCursor();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -854,6 +1175,7 @@ public sealed class FarmMapControl : Control
         {
             _panStartPoint = null;
             _panStartOffset = null;
+            UpdateCursor();
             return;
         }
 
@@ -869,11 +1191,23 @@ public sealed class FarmMapControl : Control
 
         if (_isDragging && _dragCurrentTile is { } end)
         {
-            if (_dragEntity is { } entity)
+            if (_dragEntity is not null)
             {
-                var target = ClampFootprint(new TilePosition(end.X - _dragGrabOffsetX, end.Y - _dragGrabOffsetY), entity.Width, entity.Height);
-                if (target != entity.Position)
-                    MoveRequest = new EntityMoveRequest(entity, target);
+                // Dragging a single entity that ISN'T part of the current marquee selection
+                // switches focus to just that entity, same as a plain click would - only a
+                // group drag (press landed on an existing SelectedRange member) keeps it.
+                if (_dragGroup is null)
+                    SelectedRange = Array.Empty<MapEntitySummary>();
+
+                var deltaX = end.X - start.X;
+                var deltaY = end.Y - start.Y;
+                var moves = (_dragGroup ?? new[] { _dragEntity })
+                    .Select(entity => (Entity: entity, NewPosition: ClampFootprint(new TilePosition(entity.Position.X + deltaX, entity.Position.Y + deltaY), entity.Width, entity.Height)))
+                    .Where(m => m.NewPosition != m.Entity.Position)
+                    .ToList();
+
+                if (moves.Count > 0)
+                    MoveRequest = new EntityMoveRequest(moves);
             }
             else
             {
@@ -888,6 +1222,7 @@ public sealed class FarmMapControl : Control
         _dragStartTile = null;
         _dragCurrentTile = null;
         _dragEntity = null;
+        _dragGroup = null;
         _isDragging = false;
         InvalidateVisual();
     }
@@ -944,28 +1279,62 @@ public sealed class FarmMapControl : Control
         PanOffsetTileY = tileUnderCursorY - cursor.Y / newTileScale;
     }
 
+    /// <summary>Space arms panning (see OnPointerPressed); [ and ] (with the friendlier - and =
+    /// as aliases, since brackets require a modifier key on some layouts) resize the draw
+    /// tools' brush - the standard shortcut in most paint tools, kept working even without a
+    /// tool armed so it's discoverable/harmless either way.</summary>
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+
         if (e.Key == Key.Space)
+        {
             _spaceHeld = true;
+            UpdateCursor();
+        }
+        else if (e.Key is Key.OemCloseBrackets or Key.OemPlus)
+        {
+            BrushSize = Math.Clamp(BrushSize + 1, 1, MapTabViewModel.MaxBrushSize);
+            InvalidateVisual();
+        }
+        else if (e.Key is Key.OemOpenBrackets or Key.OemMinus)
+        {
+            BrushSize = Math.Clamp(BrushSize - 1, 1, MapTabViewModel.MaxBrushSize);
+            InvalidateVisual();
+        }
     }
 
     protected override void OnKeyUp(KeyEventArgs e)
     {
         base.OnKeyUp(e);
         if (e.Key == Key.Space)
+        {
             _spaceHeld = false;
+            UpdateCursor();
+        }
     }
 
-    /// <summary>Nearest entity to a screen point, within one tile of its footprint - not just
-    /// its top-left tile, so a multi-tile building/clump is clickable (and grabbable for a
-    /// move-drag) anywhere over it, not only right at one corner. Shared by OnPointerPressed
-    /// (deciding move-drag vs marquee-drag) and ResolveSingleClick (plain-click selection).</summary>
+    /// <summary>Entity under a screen point - shared by OnPointerPressed (deciding move-drag vs
+    /// marquee-drag) and ResolveSingleClick (plain-click selection). Checks each entity's real
+    /// drawn bounds first (_entityScreenBounds/_entityDrawOrder, populated by the last real-map
+    /// render) - many sprites (a tree canopy, a tall building) are drawn well outside their
+    /// logical tile footprint, so hit-testing only the footprint meant most of what's actually
+    /// visible wasn't clickable/draggable at all. Walked in reverse draw order, so an overlap
+    /// between two sprites resolves to whichever was drawn LAST - visually on top, matching the
+    /// row-interleaved Y-sort draw order, not an arbitrary or size-based pick. Falls back to the
+    /// old nearest-footprint-tile check (within one tile) for anything not in that cache yet -
+    /// abstract view, or a frame that hasn't rendered once since load.</summary>
     private MapEntitySummary? FindEntityAt(Point screenPosition, (double MinX, double MinY, double Scale) layout)
     {
         if (Entities is null)
             return null;
+
+        for (var i = _entityDrawOrder.Count - 1; i >= 0; i--)
+        {
+            var candidate = _entityDrawOrder[i];
+            if (_entityScreenBounds.TryGetValue(candidate, out var candidateBounds) && candidateBounds.Contains(screenPosition))
+                return candidate;
+        }
 
         var tileX = screenPosition.X / layout.Scale + layout.MinX;
         var tileY = screenPosition.Y / layout.Scale + layout.MinY;

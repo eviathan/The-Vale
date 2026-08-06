@@ -13,6 +13,7 @@ namespace StardewTools.Core.Models;
 public sealed class FarmMapEditor
 {
     private static readonly XName XsiType = XName.Get("type", "http://www.w3.org/2001/XMLSchema-instance");
+    private static readonly XName XsiNil = XName.Get("nil", "http://www.w3.org/2001/XMLSchema-instance");
 
     private readonly XElement _farmLocation;
 
@@ -54,6 +55,14 @@ public sealed class FarmMapEditor
     public IReadOnlyList<ResourceClumpEditor> ResourceClumps
         => (_farmLocation.Element("resourceClumps")?.Elements("ResourceClump") ?? Enumerable.Empty<XElement>())
             .Select(e => new ResourceClumpEditor(e))
+            .ToList();
+
+    /// <summary>Bushes - a flat list (like resourceClumps/buildings, not a tile dictionary),
+    /// confirmed against real save data. See BushEditor remarks for the full field-shape story.</summary>
+    public IReadOnlyList<BushEditor> Bushes
+        => (_farmLocation.Element("largeTerrainFeatures")?.Elements("LargeTerrainFeature")
+                .Where(e => (string?)e.Attribute(XsiType) == "Bush") ?? Enumerable.Empty<XElement>())
+            .Select(e => new BushEditor(e))
             .ToList();
 
     public IReadOnlyList<PlacedObjectEditor> Objects
@@ -101,6 +110,108 @@ public sealed class FarmMapEditor
     }
 
     /// <summary>
+    /// Plants a tree at the given tile - field shape and order copied verbatim from a real
+    /// adult tree in an actual save (growthStage 5, health 10, a leading empty &lt;texture /&gt;
+    /// element before growthStage), wrapped as &lt;TerrainFeature xsi:type="Tree"&gt; matching
+    /// the terrainFeatures dictionary's real shape (confirmed: the wrapping element is always
+    /// named "TerrainFeature", with xsi:type distinguishing Tree/Grass/HoeDirt - not a
+    /// per-type element name like &lt;Object&gt;/&lt;Building&gt; use).
+    /// </summary>
+    public TreeEditor AddTree(TilePosition position, int treeType, int growthStage, bool fertilized = false)
+    {
+        var container = TerrainFeaturesContainer();
+
+        var value = new XElement("TerrainFeature",
+            new XAttribute(XsiType, "Tree"),
+            new XElement("texture"),
+            new XElement("growthStage", growthStage),
+            new XElement("treeType", treeType),
+            new XElement("health", 10),
+            new XElement("flipped", false),
+            new XElement("stump", false),
+            new XElement("tapped", false),
+            new XElement("hasSeed", false),
+            new XElement("fertilized", fertilized),
+            new XElement("shakeLeft", false));
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new TreeEditor(position, value);
+    }
+
+    /// <summary>
+    /// Tills a tile - field shape copied verbatim from a real HoeDirt in an actual save (state/
+    /// fertilizer/isGreenhouseDirt, no &lt;crop&gt; child - see HoeDirtEditor.PlantCrop for
+    /// planting into it afterward). state 0 = dry (see HoeDirtEditor.State remarks).
+    /// </summary>
+    public HoeDirtEditor AddHoeDirt(TilePosition position, int state = 0)
+    {
+        var container = TerrainFeaturesContainer();
+
+        var value = new XElement("TerrainFeature",
+            new XAttribute(XsiType, "HoeDirt"),
+            new XElement("state", state),
+            new XElement("fertilizer", 0),
+            new XElement("isGreenhouseDirt", false));
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new HoeDirtEditor(position, value);
+    }
+
+    /// <summary>
+    /// Plants a bush at the given tile - field order/shape copied verbatim from 5 real Bush
+    /// examples in an actual save (tilePosition, size, datePlanted, tileSheetOffset, health,
+    /// flipped, townBush, greenhouseBush, drawShadow - see BushEditor remarks). Wrapped as
+    /// &lt;LargeTerrainFeature xsi:type="Bush"&gt; inside its own &lt;largeTerrainFeatures&gt;
+    /// flat list, not the terrainFeatures tile dictionary. tileSheetOffset defaults to 1 (bloom/
+    /// harvest-ready) so a freshly-planted bush looks "mature" like AddTree's default adult
+    /// growthStage, per the "plant already matured" ask.
+    /// </summary>
+    public BushEditor AddBush(TilePosition position, int size, int datePlanted = 0, int tileSheetOffset = 1)
+    {
+        var container = _farmLocation.Element("largeTerrainFeatures");
+        if (container is null)
+        {
+            container = new XElement("largeTerrainFeatures");
+            _farmLocation.Add(container);
+        }
+
+        var value = new XElement("LargeTerrainFeature",
+            new XAttribute(XsiType, "Bush"),
+            new XElement("tilePosition", new XElement("X", position.X), new XElement("Y", position.Y)),
+            new XElement("size", size),
+            new XElement("datePlanted", datePlanted),
+            new XElement("tileSheetOffset", tileSheetOffset),
+            new XElement("health", 0),
+            new XElement("flipped", false),
+            new XElement("townBush", false),
+            new XElement("greenhouseBush", false),
+            new XElement("drawShadow", true));
+
+        container.Add(value);
+        return new BushEditor(value);
+    }
+
+    private XElement TerrainFeaturesContainer()
+    {
+        var container = _farmLocation.Element("terrainFeatures");
+        if (container is null)
+        {
+            container = new XElement("terrainFeatures");
+            _farmLocation.Add(container);
+        }
+
+        return container;
+    }
+
+    /// <summary>
     /// Places a new building at the given tile - deliberately limited to buildings that have
     /// no interior (Gold Clock, the 4 Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable,
     /// Shipping Bin - confirmed via Data/Buildings.json: these all have IndoorMap/
@@ -111,7 +222,7 @@ public sealed class FarmMapEditor
     /// decompiled Building.cs's [XmlElement] attributes (no real placed-building save data
     /// was available to verify against directly).
     /// </summary>
-    public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical)
+    public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical, int hayCapacity = 0)
     {
         var container = _farmLocation.Element("buildings");
         if (container is null)
@@ -138,7 +249,72 @@ public sealed class FarmMapEditor
             new XElement("magical", magical),
             new XElement("fadeWhenPlayerIsBehind", true),
             new XElement("owner", 0),
-            new XElement("newConstructionTimer", 0));
+            new XElement("newConstructionTimer", 0),
+            new XElement("skinId", new XAttribute(XsiNil, "true")),
+            // hayCapacity/buildingChests are real Building NetFields previously missing
+            // entirely (see MAP_AUDIT.md 2.1) - hayCapacity only matters for Silo (0 is inert
+            // for everything else); an empty buildingChests self-heals on next game load
+            // (confirmed: Building.load() auto-creates any chest Data/Buildings.json's own
+            // Chests list calls for that isn't already present - e.g. Junimo Hut's "Output"
+            // chest - so there's no need to hand-construct one here).
+            new XElement("hayCapacity", hayCapacity),
+            new XElement("buildingChests"));
+
+        container.Add(element);
+        return new BuildingEditor(element);
+    }
+
+    /// <summary>
+    /// Materializes the player's house as a real, editable Building. Most saves don't have one:
+    /// the base game only creates this element lazily via Farm.AddDefaultBuilding/AddDefaultBuildings
+    /// ("if missing"), called before the player ever sees their farm - saves from before that
+    /// existed, or that simply haven't been re-saved since, compute the farmhouse's position
+    /// from the map's FarmHouseEntry property instead (see Farm.GetMainFarmHouseEntry,
+    /// GetStarterFarmhouseLocation in the decompiled source) and have no save-tracked position
+    /// to move at all. This exists so the map tab has something real to move once - the actual
+    /// game accepts it as-is on next load (AddDefaultBuilding only ever constructs one "if
+    /// missing"), and re-derives nonInstancedIndoorsName from Data/Buildings.json's
+    /// NonInstancedIndoorLocation on its own regardless of what's set here (confirmed:
+    /// Building.load() overwrites it unconditionally for buildings with that data field set) -
+    /// it's set here anyway for defensiveness before that first reload. Every other field here
+    /// mirrors AddBuilding's already-verified template; only tilesWide/tilesHigh (9x5) and
+    /// humanDoor ((5,2), not (-1,-1)) differ, both taken directly from Data/Buildings.json's
+    /// "Farmhouse" entry. Callers must only invoke this when no "Farmhouse" building already
+    /// exists (see FarmMapEditor.Buildings) - Farm.GetMainFarmHouse() finds the house by
+    /// searching for buildingType "Farmhouse", so a second one would break that lookup.
+    /// </summary>
+    public BuildingEditor AddFarmhouse(TilePosition position)
+    {
+        var container = _farmLocation.Element("buildings");
+        if (container is null)
+        {
+            container = new XElement("buildings");
+            _farmLocation.Add(container);
+        }
+
+        var element = new XElement("Building",
+            new XElement("id", Guid.NewGuid().ToString()),
+            new XElement("tileX", position.X),
+            new XElement("tileY", position.Y),
+            new XElement("tilesWide", 9),
+            new XElement("tilesHigh", 5),
+            new XElement("maxOccupants", -1),
+            new XElement("currentOccupants", 0),
+            new XElement("daysOfConstructionLeft", 0),
+            new XElement("daysUntilUpgrade", 0),
+            new XElement("buildingType", "Farmhouse"),
+            new XElement("humanDoor", new XElement("X", 5), new XElement("Y", 2)),
+            new XElement("animalDoor", new XElement("X", -1), new XElement("Y", -1)),
+            new XElement("animalDoorOpen", false),
+            new XElement("animalDoorOpenAmount", 0),
+            new XElement("magical", false),
+            new XElement("fadeWhenPlayerIsBehind", true),
+            new XElement("owner", 0),
+            new XElement("newConstructionTimer", 0),
+            new XElement("nonInstancedIndoorsName", "FarmHouse"),
+            new XElement("skinId", new XAttribute(XsiNil, "true")),
+            new XElement("hayCapacity", 0),
+            new XElement("buildingChests"));
 
         container.Add(element);
         return new BuildingEditor(element);
@@ -150,6 +326,7 @@ public sealed class FarmMapEditor
     public void Remove(ResourceClumpEditor clump) => clump.Element.Remove();
     public void Remove(PlacedObjectEditor placedObject) => placedObject.WrappingItem.Remove();
     public void Remove(BuildingEditor building) => building.Element.Remove();
+    public void Remove(BushEditor bush) => bush.Element.Remove();
 
     public void Move(TreeEditor tree, TilePosition newPosition) => tree.Move(newPosition);
     public void Move(GrassEditor grass, TilePosition newPosition) => grass.Move(newPosition);
@@ -157,6 +334,7 @@ public sealed class FarmMapEditor
     public void Move(ResourceClumpEditor clump, TilePosition newPosition) => clump.Move(newPosition);
     public void Move(PlacedObjectEditor placedObject, TilePosition newPosition) => placedObject.Move(newPosition);
     public void Move(BuildingEditor building, TilePosition newPosition) => building.Move(newPosition);
+    public void Move(BushEditor bush, TilePosition newPosition) => bush.Move(newPosition);
 
     /// <summary>
     /// Walks a `&lt;name&gt;&lt;item&gt;&lt;key&gt;&lt;Vector2&gt;X/Y&lt;/Vector2&gt;&lt;/key&gt;

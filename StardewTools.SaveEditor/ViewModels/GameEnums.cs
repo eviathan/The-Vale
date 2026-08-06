@@ -134,6 +134,17 @@ public static class GameEnums
         new NamedValue(6, "Cobweb"),
     };
 
+    /// <summary>Confirmed against the decompiled Bush.cs constants (smallBush=0, mediumBush=1,
+    /// largeBush=2, greenTeaBush=3, walnutBush=4).</summary>
+    public static readonly IReadOnlyList<NamedValue> BushSizes = new[]
+    {
+        new NamedValue(0, "Small"),
+        new NamedValue(1, "Medium (berry)"),
+        new NamedValue(2, "Large"),
+        new NamedValue(3, "Tea"),
+        new NamedValue(4, "Walnut"),
+    };
+
     public static string AchievementLabel(int id)
         => AchievementNames.TryGetValue(id, out var name) ? $"{id} - {name}" : $"{id} - Achievement #{id}";
 

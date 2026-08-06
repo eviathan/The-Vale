@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
@@ -55,6 +56,8 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
     [ObservableProperty] private bool _hasSeed;
     [ObservableProperty] private bool _fertilized;
     [ObservableProperty] private bool _shakeLeft;
+    [ObservableProperty] private bool _hasMoss;
+    [ObservableProperty] private bool _wasShakenToday;
 
     public TreeDetailsViewModel(MapEntitySummary summary, TreeEditor tree, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
         : base(summary, onEdited, onRemove)
@@ -69,6 +72,8 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
         _hasSeed = tree.HasSeed;
         _fertilized = tree.Fertilized;
         _shakeLeft = tree.ShakeLeft;
+        _hasMoss = tree.HasMoss;
+        _wasShakenToday = tree.WasShakenToday;
     }
 
     partial void OnSelectedTreeTypeChanged(NamedValue value) { Tree.TreeType = value.Value; NotifyEdited(); }
@@ -80,6 +85,8 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
     partial void OnHasSeedChanged(bool value) { Tree.HasSeed = value; NotifyEdited(); }
     partial void OnFertilizedChanged(bool value) { Tree.Fertilized = value; NotifyEdited(); }
     partial void OnShakeLeftChanged(bool value) { Tree.ShakeLeft = value; NotifyEdited(); }
+    partial void OnHasMossChanged(bool value) { Tree.HasMoss = value; NotifyEdited(); }
+    partial void OnWasShakenTodayChanged(bool value) { Tree.WasShakenToday = value; NotifyEdited(); }
 
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromTree(Tree);
 }
@@ -231,17 +238,78 @@ public sealed class PlacedObjectDetailsViewModel : MapEntityDetailsViewModel
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromObject(Placed);
 }
 
-/// <summary>BuildingEditor's schema is unverified (see its own remarks) - no editable fields
-/// yet, just a read-only summary and Remove, until real save data confirms more.</summary>
-public sealed class BuildingDetailsViewModel : MapEntityDetailsViewModel
+/// <summary>BuildingEditor's other fields are unverified (see its own remarks) - Skin is the
+/// one confirmed, real, editable field (see BuildingEditor.SkinId), shown only for building
+/// types that actually have alternate skins (Data/Buildings.json's Skins list - currently just
+/// Pet Bowl among the types this tool can place/edit).</summary>
+public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
 {
+    private const string DefaultSkinLabel = "(Default)";
+
     public BuildingEditor Building { get; }
+
+    /// <summary>"(Default)" plus every real skin id for this building type - empty (just the
+    /// default entry) for the vast majority of buildings, which have no alternates at all.</summary>
+    public IReadOnlyList<string> AvailableSkins { get; }
+    public bool HasSkins => AvailableSkins.Count > 1;
+
+    [ObservableProperty] private string _selectedSkin = DefaultSkinLabel;
 
     public BuildingDetailsViewModel(MapEntitySummary summary, BuildingEditor building, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
         : base(summary, onEdited, onRemove)
     {
         Building = building;
+        AvailableSkins = new[] { DefaultSkinLabel }.Concat(MapAssets.BuildingSprites.SkinsFor(building.BuildingType)).ToList();
+        _selectedSkin = building.SkinId ?? DefaultSkinLabel;
+    }
+
+    partial void OnSelectedSkinChanged(string value)
+    {
+        Building.SkinId = value == DefaultSkinLabel ? null : value;
+        NotifyEdited();
     }
 
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromBuilding(Building);
+}
+
+public sealed partial class BushDetailsViewModel : MapEntityDetailsViewModel
+{
+    public BushEditor Bush { get; }
+    public IReadOnlyList<NamedValue> BushSizes => GameEnums.BushSizes;
+
+    [ObservableProperty] private NamedValue _selectedSize;
+    [ObservableProperty] private int _health;
+    [ObservableProperty] private bool _flipped;
+    [ObservableProperty] private bool _townBush;
+    [ObservableProperty] private bool _greenhouseBush;
+    [ObservableProperty] private bool _drawShadow;
+
+    /// <summary>Whether this bush is currently bloom/harvest-ready - a raw sprite-sheet column
+    /// selector on the real field (TileSheetOffset), not a separate bool, but exposed as a
+    /// checkbox here since 0/1 is all it ever meaningfully takes for size 0-2 bushes (see
+    /// BushSprites - walnut bushes also use it as a 0/1 "found today" flag).</summary>
+    [ObservableProperty] private bool _bloomReady;
+
+    public BushDetailsViewModel(MapEntitySummary summary, BushEditor bush, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
+        : base(summary, onEdited, onRemove)
+    {
+        Bush = bush;
+        _selectedSize = GameEnums.FindOrFirst(GameEnums.BushSizes, bush.Size);
+        _health = bush.Health;
+        _flipped = bush.Flipped;
+        _townBush = bush.TownBush;
+        _greenhouseBush = bush.GreenhouseBush;
+        _drawShadow = bush.DrawShadow;
+        _bloomReady = bush.TileSheetOffset != 0;
+    }
+
+    partial void OnSelectedSizeChanged(NamedValue value) { Bush.Size = value.Value; NotifyEdited(); }
+    partial void OnHealthChanged(int value) { Bush.Health = value; NotifyEdited(); }
+    partial void OnFlippedChanged(bool value) { Bush.Flipped = value; NotifyEdited(); }
+    partial void OnTownBushChanged(bool value) { Bush.TownBush = value; NotifyEdited(); }
+    partial void OnGreenhouseBushChanged(bool value) { Bush.GreenhouseBush = value; NotifyEdited(); }
+    partial void OnDrawShadowChanged(bool value) { Bush.DrawShadow = value; NotifyEdited(); }
+    partial void OnBloomReadyChanged(bool value) { Bush.TileSheetOffset = value ? 1 : 0; NotifyEdited(); }
+
+    public override MapEntitySummary Resummarize() => MapEntitySummary.FromBush(Bush);
 }

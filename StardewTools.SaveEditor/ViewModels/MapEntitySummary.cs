@@ -10,6 +10,7 @@ public enum MapEntityKind
     ResourceClump,
     Object,
     Building,
+    Bush,
 }
 
 /// <summary>
@@ -89,5 +90,23 @@ public sealed class MapEntitySummary
         Source = building,
         Width = building.Width,
         Height = building.Height,
+    };
+
+    private static readonly string[] SizeNames = { "small", "medium", "large", "tea", "walnut" };
+
+    /// <summary>Footprint width in tiles per size - confirmed against the decompiled
+    /// Bush.getBoundingBox() (sizes 0/3 -> 64px/1 tile, 1/4 -> 128px/2 tiles, 2 -> 192px/3
+    /// tiles). Footprint height is always 1 tile.</summary>
+    public static int FootprintWidth(int size) => size switch { 2 => 3, 1 or 4 => 2, _ => 1 };
+
+    public static MapEntitySummary FromBush(BushEditor bush) => new()
+    {
+        Position = bush.Position,
+        Kind = MapEntityKind.Bush,
+        Label = $"Bush ({(bush.Size is >= 0 and < 5 ? SizeNames[bush.Size] : bush.Size.ToString())})",
+        ColorHex = "#33691E",
+        Source = bush,
+        Width = FootprintWidth(bush.Size),
+        Height = 1,
     };
 }

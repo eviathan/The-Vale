@@ -11,7 +11,7 @@ using StardewTools.SaveEditor.MapAssets;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
-public enum PlacementTool { None, Object, Building }
+public enum PlacementTool { None, Object, Building, Till, PlantCrop, PlantTree, PlantBush }
 
 /// <summary>A placement that's blocked by existing entities - Confirm removes them and places;
 /// Cancel just drops this. Blocking is captured up front (at click time), not re-derived at
@@ -22,14 +22,26 @@ public sealed record PendingPlacement(string Label, IReadOnlyList<MapEntitySumma
 
 /// <summary>Fired by FarmMapControl once a click-and-drag that started on an existing entity
 /// finishes - see FarmMapControl's move-drag handling. A drag starting on empty space is a
-/// marquee range-select instead (SelectedRange), never this.</summary>
-public sealed record EntityMoveRequest(MapEntitySummary Entity, TilePosition NewPosition);
+/// marquee range-select instead (SelectedRange), never this. Moves.Count > 1 when the press
+/// landed on an entity that was part of the current SelectedRange - the whole marquee-selected
+/// group drags together, each keeping its position relative to the others.</summary>
+public sealed record EntityMoveRequest(IReadOnlyList<(MapEntitySummary Entity, TilePosition NewPosition)> Moves)
+{
+    public string DescribeLabel() => Moves.Count == 1
+        ? $"Move {Moves[0].Entity.Label} to ({Moves[0].NewPosition.X}, {Moves[0].NewPosition.Y})"
+        : $"Move {Moves.Count} entities";
+}
 
 public partial class MapTabViewModel : ViewModelBase
 {
     private FarmMapEditor? _map;
     private ItemListEditor? _inventory;
     private List<MapEntitySummary> _farmEntitiesCache = new();
+
+    /// <summary>Own copy of the parsed map, independent of FarmMapControl's - used only for
+    /// tile-placement validation (see CanPlaceFootprint), not rendering, so the ViewModel can
+    /// enforce the game's real placement rules without reaching into the View's internals.</summary>
+    private TmxMap? _tmxMap;
 
     [ObservableProperty] private MapEntitySummary? _selected;
     [ObservableProperty] private MapEntityDetailsViewModel? _selectedDetails;
@@ -60,15 +72,64 @@ public partial class MapTabViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
     private PlaceableBuilding? _selectedPlaceableBuilding;
 
+    [ObservableProperty] private PlaceableCrop? _selectedPlaceableCrop;
+
+    /// <summary>Whether the Plant Crop tool plants at harvest-ready maturity (the common case -
+    /// "just plant already matured crops") or as a freshly-planted seed (currentPhase 0).</summary>
+    [ObservableProperty] private bool _plantCropMature = true;
+
+    [ObservableProperty] private NamedValue _selectedTreeType = GameEnums.TreeTypes[0];
+
+    /// <summary>0-5, default 5 (adult - see TreeEditor.GrowthStage remarks) - "just plant
+    /// already matured trees" by default, but still adjustable for a sapling/etc.</summary>
+    [ObservableProperty] private int _plantTreeGrowthStage = 5;
+
+    [ObservableProperty] private NamedValue _selectedBushSize = GameEnums.BushSizes[1];
+
+    /// <summary>Whether a newly-planted bush starts bloom/harvest-ready (TileSheetOffset 1) -
+    /// same "just plant already matured" default as crops/trees.</summary>
+    [ObservableProperty] private bool _plantBushMature = true;
+
+    /// <summary>Player.Stats.DaysPlayed - only needed for a placed tea bush's age-based growth
+    /// sprite (see BushEditor.DatePlanted / FarmMapControl.CurrentDaysPlayed). Set once in Bind()
+    /// and bound OneWay through to FarmMapControl; not itself editable from the Map tab.</summary>
+    [ObservableProperty] private int _currentDaysPlayed;
+
+    public const int MaxBrushSize = 9;
+
+    /// <summary>How many tiles square the Object/Till/Plant Crop/Plant Tree tools stamp per
+    /// click (centered on the clicked tile) - TwoWay bound to FarmMapControl, which changes it
+    /// via the [ / ] keyboard shortcut (see FarmMapControl.OnKeyDown). Doesn't apply to the
+    /// Building tool - a building keeps its own real footprint regardless of brush size.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HoverFootprintWidth))]
+    [NotifyPropertyChangedFor(nameof(HoverFootprintHeight))]
+    private int _brushSize = 1;
+
+    /// <summary>What FarmMapControl should outline under the cursor while a draw tool is armed -
+    /// the building's own size for the Building tool, BrushSize for everything else. Purely a
+    /// rendering hint (OneWay to the control); BrushSize itself is what OnClickedTileChanged
+    /// actually stamps with.</summary>
+    public int HoverFootprintWidth => PlacementTool == PlacementTool.Building ? SelectedPlaceableBuilding?.TilesWide ?? 1 : BrushSize;
+    public int HoverFootprintHeight => PlacementTool == PlacementTool.Building ? SelectedPlaceableBuilding?.TilesHigh ?? 1 : BrushSize;
+
     /// <summary>Set by FarmMapControl (OneWayToSource) once a drag that started on an existing
     /// entity finishes - see OnMoveRequestChanged.</summary>
     [ObservableProperty] private EntityMoveRequest? _moveRequest;
 
     [ObservableProperty] private PlacementTool _placementTool = PlacementTool.None;
 
-    /// <summary>Bool proxies over PlacementTool so the two toggle buttons in the panel don't
-    /// need an enum-to-bool converter - setting one turns the other off (mutually exclusive
-    /// tools), and OnPlacementToolChanged keeps both in sync when either one changes.</summary>
+    /// <summary>Bool proxies over PlacementTool so the toolbar's toggle buttons don't need an
+    /// enum-to-bool converter - setting one turns the others off (mutually exclusive tools), and
+    /// OnPlacementToolChanged keeps all of them in sync when any one changes. IsSelectToolActive
+    /// is the "no draw tool armed" state (plain click-select/marquee) - setting it just clears
+    /// PlacementTool, same as any other tool being turned off.</summary>
+    public bool IsSelectToolActive
+    {
+        get => PlacementTool == PlacementTool.None;
+        set { if (value) PlacementTool = PlacementTool.None; }
+    }
+
     public bool IsObjectToolActive
     {
         get => PlacementTool == PlacementTool.Object;
@@ -81,15 +142,52 @@ public partial class MapTabViewModel : ViewModelBase
         set => PlacementTool = value ? PlacementTool.Building : PlacementTool.None;
     }
 
-    /// <summary>Drives FarmMapControl.IsPlacementToolActive - whether either draw tool is
-    /// armed, regardless of which one, so a click-and-drag paints instead of marquee-selecting.</summary>
+    public bool IsTillToolActive
+    {
+        get => PlacementTool == PlacementTool.Till;
+        set => PlacementTool = value ? PlacementTool.Till : PlacementTool.None;
+    }
+
+    public bool IsPlantCropToolActive
+    {
+        get => PlacementTool == PlacementTool.PlantCrop;
+        set => PlacementTool = value ? PlacementTool.PlantCrop : PlacementTool.None;
+    }
+
+    public bool IsPlantTreeToolActive
+    {
+        get => PlacementTool == PlacementTool.PlantTree;
+        set => PlacementTool = value ? PlacementTool.PlantTree : PlacementTool.None;
+    }
+
+    public bool IsPlantBushToolActive
+    {
+        get => PlacementTool == PlacementTool.PlantBush;
+        set => PlacementTool = value ? PlacementTool.PlantBush : PlacementTool.None;
+    }
+
+    /// <summary>Drives FarmMapControl.IsPlacementToolActive - whether any draw tool is armed,
+    /// so a click-and-drag paints instead of marquee-selecting.</summary>
     public bool IsAnyToolActive => PlacementTool != PlacementTool.None;
 
     partial void OnPlacementToolChanged(PlacementTool value)
     {
+        OnPropertyChanged(nameof(IsSelectToolActive));
         OnPropertyChanged(nameof(IsObjectToolActive));
         OnPropertyChanged(nameof(IsBuildingToolActive));
+        OnPropertyChanged(nameof(IsTillToolActive));
+        OnPropertyChanged(nameof(IsPlantCropToolActive));
+        OnPropertyChanged(nameof(IsPlantTreeToolActive));
+        OnPropertyChanged(nameof(IsPlantBushToolActive));
         OnPropertyChanged(nameof(IsAnyToolActive));
+        OnPropertyChanged(nameof(HoverFootprintWidth));
+        OnPropertyChanged(nameof(HoverFootprintHeight));
+    }
+
+    partial void OnSelectedPlaceableBuildingChanged(PlaceableBuilding? value)
+    {
+        OnPropertyChanged(nameof(HoverFootprintWidth));
+        OnPropertyChanged(nameof(HoverFootprintHeight));
     }
 
     [ObservableProperty]
@@ -97,10 +195,19 @@ public partial class MapTabViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(CancelPendingPlacementCommand))]
     private PendingPlacement? _pendingPlacement;
 
+    /// <summary>Set when a placement/move was rejected because the target tile(s) don't allow
+    /// it per the game's own rules (water, no back tile, "NoFurniture", not "Buildable"/
+    /// "Diggable" for a building) - see CanPlaceFootprint. Shown briefly in the side panel;
+    /// cleared on the next successful placement/move attempt.</summary>
+    [ObservableProperty] private string? _placementBlockedMessage;
+
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
     public IReadOnlyList<PlaceableItem> AvailablePlaceableItems => PlaceableItems.All;
     public IReadOnlyList<PlaceableBuilding> AvailablePlaceableBuildings => PlaceableBuildings.All;
+    public IReadOnlyList<PlaceableCrop> AvailablePlaceableCrops => PlaceableCrops.All;
+    public IReadOnlyList<NamedValue> AvailableTreeTypes => GameEnums.TreeTypes;
+    public IReadOnlyList<NamedValue> AvailableBushSizes => GameEnums.BushSizes;
 
     public MapTabViewModel()
     {
@@ -122,6 +229,88 @@ public partial class MapTabViewModel : ViewModelBase
         var settings = AppSettings.Load();
         settings.MapContentFolder = value;
         settings.Save();
+        TryLoadTmxMap();
+    }
+
+    /// <summary>Own, render-independent parse of the current location's map, used only to check
+    /// real placement rules (CanPlaceFootprint) - best-effort, same as FarmMapControl's own
+    /// loader: a missing/unreadable map just means placement checks are skipped (CanPlaceFootprint
+    /// returns true, i.e. no restriction) rather than blocking the whole tab.</summary>
+    private void TryLoadTmxMap()
+    {
+        _tmxMap = null;
+        if (string.IsNullOrWhiteSpace(ContentFolder))
+            return;
+
+        try
+        {
+            var loader = new MapAssetLoader(ContentFolder);
+            if (loader.HasMap(SelectedLocationName))
+                _tmxMap = loader.LoadMap(SelectedLocationName);
+        }
+        catch
+        {
+            _tmxMap = null;
+        }
+    }
+
+    /// <summary>
+    /// Mirrors the game's own tile-placement rules (GameLocation.isTilePlaceable/isBuildable -
+    /// see TmxMap's remarks for exactly how, verified against the decompiled source). Checks
+    /// every tile in the footprint, not just the anchor tile, so a multi-tile building can't
+    /// have half of itself hanging over water. Buildings use the stricter IsTileBuildable
+    /// (matches isBuildable); plain objects use IsTilePlaceable (matches CanItemBePlacedHere's
+    /// isTilePlaceable check). Returns true (no restriction) when no map is loaded, so this
+    /// never blocks placement in the abstract/no-content-folder view. Doesn't check "already
+    /// occupied by another placed entity" - TryPlaceOrConfirm's overlap check covers that
+    /// separately (and unlike terrain, that one's fine to resolve via a confirmation dialog).
+    /// </summary>
+    private bool CanPlaceFootprint(TilePosition tile, int width, int height, bool isBuilding)
+    {
+        if (_tmxMap is null)
+            return true;
+
+        for (var x = tile.X; x < tile.X + width; x++)
+        {
+            for (var y = tile.Y; y < tile.Y + height; y++)
+            {
+                var ok = isBuilding ? _tmxMap.IsTileBuildable(x, y) : _tmxMap.IsTilePlaceable(x, y);
+                if (!ok)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// CanPlaceFootprint for the core TilesWide x TilesHigh rectangle, plus every one of the
+    /// building's own AdditionalPlacementTiles (Data/Buildings.json) - e.g. Farmhouse's mailbox
+    /// tile sits outside its main footprint. Confirmed real, enforced validation (see
+    /// MAP_AUDIT.md 2.3): GameLocation.buildStructure checks isBuildable for these too, not just
+    /// the core rectangle, with an OnlyNeedsToBePassable variant for tiles that don't need to be
+    /// strictly Buildable/Diggable - approximated here as IsTilePlaceable (the closest existing
+    /// check) rather than replicating isBuildable's separate isTilePassable-based branch exactly.
+    /// </summary>
+    private bool CanPlaceBuildingFootprint(TilePosition tile, PlaceableBuilding building)
+    {
+        if (!CanPlaceFootprint(tile, building.TilesWide, building.TilesHigh, isBuilding: true))
+            return false;
+
+        foreach (var area in building.AdditionalPlacementTiles)
+        {
+            for (var dx = 0; dx < area.Width; dx++)
+            {
+                for (var dy = 0; dy < area.Height; dy++)
+                {
+                    var extraTile = new TilePosition(tile.X + area.X + dx, tile.Y + area.Y + dy);
+                    if (!CanPlaceFootprint(extraTile, 1, 1, isBuilding: !area.OnlyNeedsToBePassable))
+                        return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     partial void OnSelectedChanged(MapEntitySummary? value)
@@ -143,6 +332,7 @@ public partial class MapTabViewModel : ViewModelBase
             { Kind: MapEntityKind.ResourceClump, Source: ResourceClumpEditor c } => new ResourceClumpDetailsViewModel(value, c, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Bush, Source: BushEditor bu } => new BushDetailsViewModel(value, bu, OnEntityEdited, RemoveEntity),
             _ => null,
         };
     }
@@ -175,6 +365,7 @@ public partial class MapTabViewModel : ViewModelBase
             case ResourceClumpEditor clump: _map.Remove(clump); break;
             case PlacedObjectEditor obj: _map.Remove(obj); break;
             case BuildingEditor building: _map.Remove(building); break;
+            case BushEditor bush: _map.Remove(bush); break;
         }
     }
 
@@ -230,6 +421,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         Selected = null;
         Entities.Clear();
+        TryLoadTmxMap();
 
         // Only Farm has placed-entity data wired up (trees/objects/clumps) - other locations
         // show real tile art with no overlay until that's built out per location.
@@ -244,6 +436,7 @@ public partial class MapTabViewModel : ViewModelBase
         _inventory = save.Player.Inventory;
         Season = save.Season;
         HouseUpgradeLevel = save.Player.HouseUpgradeLevel;
+        CurrentDaysPlayed = save.Stats.DaysPlayed;
         Selected = null;
         SelectedRange = Array.Empty<MapEntitySummary>();
 
@@ -251,6 +444,7 @@ public partial class MapTabViewModel : ViewModelBase
         foreach (var name in save.LocationNames.OrderBy(n => n))
             AvailableLocations.Add(name);
         SelectedLocationName = AvailableLocations.Contains("Farm") ? "Farm" : AvailableLocations.FirstOrDefault() ?? "Farm";
+        TryLoadTmxMap(); // explicit, not just relying on OnSelectedLocationNameChanged - that partial won't fire above if SelectedLocationName happened to already equal "Farm"
 
         _farmEntitiesCache = new List<MapEntitySummary>();
         foreach (var tree in _map.Trees) _farmEntitiesCache.Add(MapEntitySummary.FromTree(tree));
@@ -258,7 +452,22 @@ public partial class MapTabViewModel : ViewModelBase
         foreach (var dirt in _map.HoeDirtTiles) _farmEntitiesCache.Add(MapEntitySummary.FromHoeDirt(dirt));
         foreach (var clump in _map.ResourceClumps) _farmEntitiesCache.Add(MapEntitySummary.FromClump(clump));
         foreach (var obj in _map.Objects) _farmEntitiesCache.Add(MapEntitySummary.FromObject(obj));
-        foreach (var building in _map.Buildings) _farmEntitiesCache.Add(MapEntitySummary.FromBuilding(building));
+        foreach (var bush in _map.Bushes) _farmEntitiesCache.Add(MapEntitySummary.FromBush(bush));
+
+        var buildings = _map.Buildings;
+        if (buildings.All(b => b.BuildingType != "Farmhouse"))
+        {
+            // Most saves don't have one yet - the base game only creates this element lazily
+            // ("if missing", confirmed against the decompiled Farm.AddDefaultBuildings/
+            // GameLocation.AddDefaultBuilding), so until then the house's position is computed
+            // purely from the map's FarmHouseEntry property, not tracked anywhere in the save -
+            // nothing to select or move. (59, 12) is Farm.GetStarterFarmhouseLocation() with
+            // Farm.tmx's actual FarmHouseEntry fallback of (64, 15) - confirmed Farm.tmx sets no
+            // FarmHouseEntry override, so the base game's own hardcoded default applies here too.
+            var farmhouse = _map.AddFarmhouse(new TilePosition(59, 12));
+            buildings = buildings.Append(farmhouse).ToList();
+        }
+        foreach (var building in buildings) _farmEntitiesCache.Add(MapEntitySummary.FromBuilding(building));
 
         Entities.Clear();
         if (SelectedLocationName == "Farm")
@@ -290,6 +499,13 @@ public partial class MapTabViewModel : ViewModelBase
         if (_map is null)
             return;
 
+        if (!CanPlaceFootprint(tile, 1, 1, isBuilding: false))
+        {
+            PlacementBlockedMessage = $"Can't place {item.Name} at ({tile.X}, {tile.Y}) - the game wouldn't allow an item there (water, no ground, or marked unplaceable).";
+            return;
+        }
+
+        PlacementBlockedMessage = null;
         var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
         var summary = MapEntitySummary.FromObject(placed);
         _farmEntitiesCache.Add(summary);
@@ -314,8 +530,92 @@ public partial class MapTabViewModel : ViewModelBase
         if (_map is null)
             return;
 
-        var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical);
+        if (!CanPlaceBuildingFootprint(tile, building))
+        {
+            PlacementBlockedMessage = $"Can't build {building.Name} at ({tile.X}, {tile.Y}) - part of its footprint (or one of its extra required tiles, e.g. a mailbox spot) isn't buildable ground.";
+            return;
+        }
+
+        PlacementBlockedMessage = null;
+        var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical, building.HayCapacity);
         var summary = MapEntitySummary.FromBuilding(placed);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
+    private void TillAt(TilePosition tile)
+    {
+        if (_map is null)
+            return;
+
+        var dirt = _map.AddHoeDirt(tile);
+        var summary = MapEntitySummary.FromHoeDirt(dirt);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
+    /// <summary>Plants into an existing bare (crop-less) HoeDirt tile at this position if one's
+    /// already there (the normal till-then-plant flow), otherwise tills a fresh one first -
+    /// either way ending with exactly one HoeDirt entity at this tile. PlantCropMature decides
+    /// whether it's planted as a freshly-sown seed (currentPhase 0) or already harvest-ready
+    /// (currentPhase at the crop's own last real growth phase - "just plant already matured
+    /// crops"); fullGrown is only meaningful for regrowable crops (RegrowDays != -1) - see
+    /// HoeDirtEditor.PlantCrop remarks for why matching the game's own fullyGrown semantics
+    /// matters for harvestability.</summary>
+    private void PlantCropAt(TilePosition tile, PlaceableCrop crop)
+    {
+        if (_map is null)
+            return;
+
+        var existing = Entities.FirstOrDefault(e => e.Kind == MapEntityKind.HoeDirt && e.Position == tile);
+        var dirt = existing?.Source as HoeDirtEditor ?? _map.AddHoeDirt(tile);
+
+        var currentPhase = PlantCropMature ? crop.MaturePhase : 0;
+        var fullGrown = PlantCropMature && crop.RegrowDays != -1;
+        var flip = Random.Shared.Next(2) == 0;
+
+        dirt.PlantCrop(crop.SeedIndex, crop.DaysInPhase, crop.RegrowDays, crop.HarvestItemId, crop.HarvestMinStack,
+            crop.HarvestMaxStack, crop.HarvestMaxIncreasePerFarmingLevel, crop.IsScytheHarvest, crop.IsRaisedSeeds,
+            crop.ExtraHarvestChance, crop.SpriteIndex, crop.Seasons, currentPhase, 0, fullGrown, flip);
+
+        var fresh = MapEntitySummary.FromHoeDirt(dirt);
+        if (existing is not null)
+        {
+            var idx = Entities.IndexOf(existing);
+            if (idx >= 0) Entities[idx] = fresh;
+            var cacheIdx = _farmEntitiesCache.IndexOf(existing);
+            if (cacheIdx >= 0) _farmEntitiesCache[cacheIdx] = fresh;
+        }
+        else
+        {
+            _farmEntitiesCache.Add(fresh);
+            Entities.Add(fresh);
+        }
+
+        Selected = fresh;
+    }
+
+    private void PlantTreeAt(TilePosition tile, int treeType, int growthStage)
+    {
+        if (_map is null)
+            return;
+
+        var tree = _map.AddTree(tile, treeType, growthStage);
+        var summary = MapEntitySummary.FromTree(tree);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
+    private void PlantBushAt(TilePosition tile, int size)
+    {
+        if (_map is null)
+            return;
+
+        var bush = _map.AddBush(tile, size, CurrentDaysPlayed, PlantBushMature ? 1 : 0);
+        var summary = MapEntitySummary.FromBush(bush);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
         Selected = summary;
@@ -325,7 +625,11 @@ public partial class MapTabViewModel : ViewModelBase
     /// new click, place immediately if the target footprint is clear, or stage a
     /// PendingPlacement (and wait for the Confirm/Cancel buttons) if something's in the way -
     /// "clicking drops a single at that position if possible [...] if possible to change the
-    /// existing tiles to a state where its possible triggers a confirmation".</summary>
+    /// existing tiles to a state where its possible triggers a confirmation". Object/Till/
+    /// PlantCrop/PlantTree stamp a BrushSize x BrushSize area (see ApplyBrushTool) instead of
+    /// just the one clicked tile; Building always keeps its own real footprint regardless of
+    /// brush size - stamping several buildings at once doesn't make sense the way a wider
+    /// tilled patch or a denser thicket of trees does.</summary>
     partial void OnClickedTileChanged(TilePosition? value)
     {
         if (value is not { } tile || _map is null || SelectedLocationName != "Farm")
@@ -334,26 +638,142 @@ public partial class MapTabViewModel : ViewModelBase
         switch (PlacementTool)
         {
             case PlacementTool.Object when SelectedPlaceableItem is { } item:
-                TryPlaceOrConfirm(tile, 1, 1, $"Place {item}", () => PlaceObjectAt(tile, item));
+                ApplyBrushTool(tile, $"Place {item}", $"Can't place {item.Name} there - the game wouldn't allow an item there (water, no ground, or marked unplaceable).",
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null, applyAt: t => PlaceObjectAt(t, item));
                 break;
             case PlacementTool.Building when SelectedPlaceableBuilding is { } building:
+                if (!CanPlaceBuildingFootprint(tile, building))
+                {
+                    PlacementBlockedMessage = $"Can't build {building.Name} at ({tile.X}, {tile.Y}) - part of its footprint (or one of its extra required tiles, e.g. a mailbox spot) isn't buildable ground.";
+                    break;
+                }
                 TryPlaceOrConfirm(tile, building.TilesWide, building.TilesHigh, $"Place {building}", () => PlaceBuildingAt(tile, building));
+                break;
+            case PlacementTool.Till:
+                ApplyBrushTool(tile, "Till soil", "Can't till there - not diggable ground.",
+                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false)
+                        && !Entities.Any(e => e.Kind == MapEntityKind.HoeDirt && e.Position == t), // already tilled - nothing to do, skip silently rather than re-confirm
+                    ignoreBlocking: null, applyAt: TillAt);
+                break;
+            case PlacementTool.PlantCrop when SelectedPlaceableCrop is { } crop:
+                ApplyBrushTool(tile, $"Plant {crop.Name}", $"Can't plant {crop.Name} there - not diggable/plantable ground.",
+                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false),
+                    ignoreBlocking: e => e.Kind == MapEntityKind.HoeDirt && ((HoeDirtEditor)e.Source).Crop is null, // bare tilled soil is fine to plant straight into
+                    applyAt: t => PlantCropAt(t, crop));
+                break;
+            case PlacementTool.PlantTree:
+                ApplyBrushTool(tile, $"Plant {SelectedTreeType.Name} tree", "Can't plant a tree there - the game wouldn't allow one there.",
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null,
+                    applyAt: t => PlantTreeAt(t, SelectedTreeType.Value, PlantTreeGrowthStage));
+                break;
+            case PlacementTool.PlantBush:
+                // A bush's footprint varies by size (1-3 tiles wide - MapEntitySummary.FootprintWidth),
+                // so like Building it keeps its own real footprint per click rather than stamping a
+                // BrushSize x BrushSize area - several overlapping wide bushes from one brush stroke
+                // wouldn't make sense the way a wider tilled patch does.
+                var bushWidth = MapEntitySummary.FootprintWidth(SelectedBushSize.Value);
+                if (!CanPlaceFootprint(tile, bushWidth, 1, isBuilding: false))
+                {
+                    PlacementBlockedMessage = $"Can't plant a bush at ({tile.X}, {tile.Y}) - the game wouldn't allow one there.";
+                    break;
+                }
+                TryPlaceOrConfirm(tile, bushWidth, 1, $"Plant {SelectedBushSize.Name} bush", () => PlantBushAt(tile, SelectedBushSize.Value));
                 break;
         }
     }
 
-    /// <summary>Dragging an existing entity to a new tile - see FarmMapControl's move-drag
-    /// handling (a drag starting on empty space is a marquee range-select instead, never this).
-    /// Goes through the same TryPlaceOrConfirm staging as a brand-new placement, just excluding
-    /// the entity being moved from its own "am I blocked" check.</summary>
+    /// <summary>Every tile in a BrushSize x BrushSize square centered on (as close as an even
+    /// size allows) the given tile - size 1 is just the tile itself.</summary>
+    private IEnumerable<TilePosition> BrushTiles(TilePosition center)
+    {
+        var startX = center.X - (BrushSize - 1) / 2;
+        var startY = center.Y - (BrushSize - 1) / 2;
+        for (var dx = 0; dx < BrushSize; dx++)
+            for (var dy = 0; dy < BrushSize; dy++)
+                yield return new TilePosition(startX + dx, startY + dy);
+    }
+
+    /// <summary>Shared "brush stroke" flow for the single-tile draw tools. Tiles that fail
+    /// isValidTile are silently skipped - a stroke that clips water/an edge/already-tilled soil
+    /// just doesn't act there, like a real brush - but if none of the brush's tiles are valid,
+    /// PlacementBlockedMessage explains why. Blocking entities across every still-valid tile are
+    /// batched into one PendingPlacement/confirmation, same as everywhere else on this map;
+    /// ignoreBlocking lets a tool treat some entity kinds (bare tilled soil, for Till/PlantCrop)
+    /// as fine to build into directly rather than something to clear first.</summary>
+    private void ApplyBrushTool(TilePosition center, string label, string invalidMessage,
+        Func<TilePosition, bool> isValidTile, Func<MapEntitySummary, bool>? ignoreBlocking, Action<TilePosition> applyAt)
+    {
+        var tiles = BrushTiles(center).Where(isValidTile).ToList();
+        if (tiles.Count == 0)
+        {
+            PlacementBlockedMessage = invalidMessage;
+            return;
+        }
+
+        PlacementBlockedMessage = null;
+        var blocking = Entities
+            .Where(e => tiles.Any(t => Overlaps(e, t, 1, 1)))
+            .Where(e => ignoreBlocking is null || !ignoreBlocking(e))
+            .ToList();
+
+        void Apply()
+        {
+            foreach (var t in tiles)
+                applyAt(t);
+        }
+
+        if (blocking.Count == 0)
+        {
+            Apply();
+            return;
+        }
+
+        var confirmLabel = tiles.Count == 1 ? $"{label} at ({tiles[0].X}, {tiles[0].Y})" : $"{label} at {tiles.Count} tiles";
+        PendingPlacement = new PendingPlacement(confirmLabel, blocking, Apply);
+    }
+
+    /// <summary>Dragging an existing entity (or, if the press landed on a member of the current
+    /// SelectedRange, the whole marquee-selected group) to new tiles - see FarmMapControl's
+    /// move-drag handling (a drag starting on empty space is a marquee range-select instead,
+    /// never this). Blocked by anything in the way of ANY move in the batch, excluding the
+    /// entities being moved from their own "am I blocked" check (they're about to vacate their
+    /// current tiles, and a group's members can sit right next to each other en route).</summary>
     partial void OnMoveRequestChanged(EntityMoveRequest? value)
     {
-        if (value is not { } request || _map is null)
+        if (value is not { } request || _map is null || request.Moves.Count == 0)
             return;
 
-        var (entity, newPosition) = (request.Entity, request.NewPosition);
-        TryPlaceOrConfirm(newPosition, entity.Width, entity.Height, $"Move {entity.Label} to ({newPosition.X}, {newPosition.Y})",
-            () => MoveEntityTo(entity, newPosition), exclude: entity);
+        // Terrain rules block the whole batch, not just the offending member - a group drag
+        // either all lands or none of it does, rather than silently dropping one entity where
+        // the others moved fine.
+        var invalidMove = request.Moves.FirstOrDefault(m => !CanPlaceFootprint(m.NewPosition, m.Entity.Width, m.Entity.Height, isBuilding: m.Entity.Kind == MapEntityKind.Building));
+        if (invalidMove.Entity is not null)
+        {
+            PlacementBlockedMessage = $"Can't move {invalidMove.Entity.Label} to ({invalidMove.NewPosition.X}, {invalidMove.NewPosition.Y}) - the game wouldn't allow it there.";
+            return;
+        }
+
+        PlacementBlockedMessage = null;
+        var moving = request.Moves.Select(m => m.Entity).ToHashSet();
+        var blocking = Entities
+            .Where(e => !moving.Contains(e))
+            .Where(e => request.Moves.Any(m => Overlaps(e, m.NewPosition, m.Entity.Width, m.Entity.Height)))
+            .Distinct()
+            .ToList();
+
+        void ApplyMoves()
+        {
+            foreach (var (entity, newPosition) in request.Moves)
+                MoveEntityTo(entity, newPosition);
+        }
+
+        if (blocking.Count == 0)
+        {
+            ApplyMoves();
+            return;
+        }
+
+        PendingPlacement = new PendingPlacement(request.DescribeLabel(), blocking, ApplyMoves);
     }
 
     private void MoveEntityTo(MapEntitySummary entity, TilePosition newPosition)
@@ -369,6 +789,7 @@ public partial class MapTabViewModel : ViewModelBase
             case ResourceClumpEditor clump: _map.Move(clump, newPosition); break;
             case PlacedObjectEditor obj: _map.Move(obj, newPosition); break;
             case BuildingEditor building: _map.Move(building, newPosition); break;
+            case BushEditor bush: _map.Move(bush, newPosition); break;
             default: return;
         }
 
@@ -398,6 +819,7 @@ public partial class MapTabViewModel : ViewModelBase
         ResourceClumpEditor c => MapEntitySummary.FromClump(c),
         PlacedObjectEditor o => MapEntitySummary.FromObject(o),
         BuildingEditor b => MapEntitySummary.FromBuilding(b),
+        BushEditor bu => MapEntitySummary.FromBush(bu),
         _ => throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}."),
     };
 
@@ -405,8 +827,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         var blocking = Entities
             .Where(e => !ReferenceEquals(e, exclude))
-            .Where(e => e.Position.X + e.Width - 1 >= tile.X && e.Position.X <= tile.X + width - 1
-                     && e.Position.Y + e.Height - 1 >= tile.Y && e.Position.Y <= tile.Y + height - 1)
+            .Where(e => Overlaps(e, tile, width, height))
             .ToList();
 
         if (blocking.Count == 0)
@@ -417,6 +838,10 @@ public partial class MapTabViewModel : ViewModelBase
 
         PendingPlacement = new PendingPlacement(label, blocking, place);
     }
+
+    private static bool Overlaps(MapEntitySummary entity, TilePosition tile, int width, int height)
+        => entity.Position.X + entity.Width - 1 >= tile.X && entity.Position.X <= tile.X + width - 1
+        && entity.Position.Y + entity.Height - 1 >= tile.Y && entity.Position.Y <= tile.Y + height - 1;
 
     private bool HasPendingPlacement => PendingPlacement is not null;
 

@@ -127,4 +127,78 @@ public sealed class TmxMap
 
         return results;
     }
+
+    /// <summary>The named layer's tile property at (x,y), or null if out of bounds/no
+    /// tile/property not set - mirrors GameLocation.doesTileHaveProperty's tileset-properties
+    /// path (the per-instance tile.Properties override path doesn't apply here: real Stardew
+    /// maps only use per-instance overrides for Warp-style string lists, never Water/Buildable/
+    /// Diggable/NoFurniture, which are always plain tileset properties).</summary>
+    private string? GetTileProperty(int x, int y, string layerName, string propertyName)
+    {
+        if (x < 0 || x >= Width || y < 0 || y >= Height)
+            return null;
+
+        var layer = Layers.FirstOrDefault(l => l.Name == layerName);
+        var gid = layer?.Tiles[y * Width + x] ?? 0;
+        if (gid == 0)
+            return null;
+
+        return TilesetFor(gid)?.PropertiesFor(gid)?.GetValueOrDefault(propertyName);
+    }
+
+    /// <summary>Mirrors GameLocation.isWaterTile.</summary>
+    public bool IsWaterTile(int x, int y) => GetTileProperty(x, y, "Back", "Water") != null;
+
+    /// <summary>
+    /// Mirrors GameLocation.isTilePlaceable - what the game checks before letting a plain
+    /// Object be set down (verified against the decompiled source: no Back tile at all, a
+    /// water tile, or a "NoFurniture" tile property all block it). Doesn't check "already
+    /// occupied by another placed entity" or farm-type-specific extras (Farm doesn't override
+    /// IsLocationSpecificPlacementRestriction, confirmed - it's a no-op) - the map tab's own
+    /// overlap/PendingPlacement logic already covers the former.
+    /// </summary>
+    public bool IsTilePlaceable(int x, int y)
+    {
+        if (x < 0 || x >= Width || y < 0 || y >= Height)
+            return false;
+
+        var backLayer = Layers.FirstOrDefault(l => l.Name == "Back");
+        if (backLayer is null || backLayer.Tiles[y * Width + x] == 0)
+            return false;
+
+        if (IsWaterTile(x, y))
+            return false;
+
+        if (GetTileProperty(x, y, "Back", "NoFurniture") != null)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Mirrors GameLocation.isBuildable's per-tile logic (verified against the decompiled
+    /// source): placeable, and either explicitly marked "Buildable" or "Diggable" without being
+    /// explicitly marked un-buildable. Skips the map-wide ValidBuildRect/LooserBuildRestrictions
+    /// properties - the bundled Farm.tmx sets neither, so the per-tile check is what actually
+    /// governs buildability on a real farm - and the "already occupied by a building" check,
+    /// which the map tab's own overlap/PendingPlacement logic already covers.
+    /// </summary>
+    public bool IsTileBuildable(int x, int y)
+    {
+        if (!IsTilePlaceable(x, y))
+            return false;
+
+        var buildable = GetTileProperty(x, y, "Back", "Buildable");
+        if (buildable is not null && (buildable.Equals("t", StringComparison.OrdinalIgnoreCase) || buildable.Equals("true", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        var explicitlyNotBuildable = buildable is not null && buildable.Equals("f", StringComparison.OrdinalIgnoreCase);
+        return !explicitlyNotBuildable && GetTileProperty(x, y, "Back", "Diggable") != null;
+    }
+
+    /// <summary>Mirrors Hoe.cs's own tillability check exactly: a Back-layer tile is diggable
+    /// purely by having the "Diggable" property set, nothing else (no separate water/placeable
+    /// check in the real tool code - in practice a water tile never also carries "Diggable", so
+    /// this doesn't need to layer IsTilePlaceable on top).</summary>
+    public bool IsTileDiggable(int x, int y) => GetTileProperty(x, y, "Back", "Diggable") != null;
 }

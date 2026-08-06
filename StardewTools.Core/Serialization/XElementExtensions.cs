@@ -76,4 +76,29 @@ internal static class XElementExtensions
         var child = parent.Element(childName);
         return child is null ? null : int.Parse(child.Value, CultureInfo.InvariantCulture);
     }
+
+    public static bool? TryGetChildBool(this XElement parent, string childName)
+    {
+        var child = parent.Element(childName);
+        return child is null ? null : bool.Parse(child.Value);
+    }
+
+    /// <summary>
+    /// For newer/optional fields that a real save element might genuinely not have yet (e.g. a
+    /// 1.6 field on an element shape last confirmed pre-1.6) - creates the child if missing
+    /// instead of throwing, so editing a field that happens to be absent doesn't corrupt the
+    /// element or blow up. Prefer the throwing SetChildBool/SetChildText for fields already
+    /// confirmed present in every real save example.
+    /// </summary>
+    public static void SetChildBoolCreateIfMissing(this XElement parent, string childName, bool value)
+    {
+        var child = parent.Element(childName);
+        if (child is null)
+        {
+            child = new XElement(childName);
+            parent.Add(child);
+        }
+
+        child.Value = value ? "true" : "false";
+    }
 }

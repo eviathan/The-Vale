@@ -1,49 +1,165 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Media.Imaging;
 
 namespace StardewTools.SaveEditor.MapAssets;
 
 /// <summary>
-/// Real sprites for placed farm buildings (barn, coop, silo, etc.) - one full image per
-/// building type under Buildings/{BuildingType}.png, not a shared spritesheet like objects or
-/// trees. Recolorable buildings (cabins) also have a "..._PaintMask" tint overlay in the same
-/// folder that isn't applied here - the player's actual paint choice isn't tracked on
-/// BuildingEditor yet, so the base skin's colors are used regardless.
+/// Real sprites for placed farm buildings (barn, coop, silo, etc.), reading Data/Buildings.json
+/// for the real per-building Texture/SourceRect/SeasonOffset/Skins rather than assuming "the
+/// whole PNG is the sprite" - confirmed wrong for at least Pet Bowl (SourceRect (32,0,32,32) out
+/// of a 96x128 sheet packing all 4 seasons x 2 frames) by inspecting the actual file. Verified
+/// against the decompiled Building.getSourceRect()/ApplySourceRectOffsets(): SourceRect
+/// (0,0,0,0) is the game's own "no crop, use the whole texture" sentinel (most buildings use
+/// this - Gold Clock, Silo, Well, Fish Pond, Junimo Hut, ... - which is why the old whole-image
+/// assumption happened to work for them); anything else is a real crop, shifted per-season by
+/// SeasonOffset x Game1.seasonIndex (Spring=0/Summer=1/Fall=2/Winter=3). A skin only swaps
+/// Texture - SourceRect/SeasonOffset still come from the base building data (confirmed: skin
+/// entries carry no SourceRect of their own in Data/Buildings.json).
 /// </summary>
 public static class BuildingSprites
 {
-    private static readonly Dictionary<string, Bitmap?> Cache = new();
+    private sealed record SpriteData(string Texture, Rect SourceRect, (int X, int Y) SeasonOffset, IReadOnlyDictionary<string, string> SkinTextures);
 
-    public static bool TryGetSprite(string contentFolder, string buildingType, out Bitmap bitmap, out Rect source)
+    private static readonly Dictionary<string, Bitmap?> BitmapCache = new();
+    private static IReadOnlyDictionary<string, SpriteData>? _data;
+
+    private static IReadOnlyDictionary<string, SpriteData> Data => _data ??= Load();
+
+    private static Dictionary<string, SpriteData> Load()
     {
-        if (!TryGetBitmap(contentFolder, buildingType, out bitmap))
+        var result = new Dictionary<string, SpriteData>();
+        var path = Path.Combine(BundledContent.FolderPath, "Data", "Buildings.json");
+        if (!File.Exists(path))
+            return result;
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            var el = prop.Value;
+
+            var texture = TextureFileName(el.TryGetProperty("Texture", out var t) ? t.GetString() : null) ?? prop.Name;
+
+            var sourceRect = default(Rect);
+            if (el.TryGetProperty("SourceRect", out var sr))
+            {
+                var w = sr.TryGetProperty("Width", out var wEl) ? wEl.GetInt32() : 0;
+                var h = sr.TryGetProperty("Height", out var hEl) ? hEl.GetInt32() : 0;
+                if (w > 0 && h > 0)
+                {
+                    var x = sr.TryGetProperty("X", out var xEl) ? xEl.GetInt32() : 0;
+                    var y = sr.TryGetProperty("Y", out var yEl) ? yEl.GetInt32() : 0;
+                    sourceRect = new Rect(x, y, w, h);
+                }
+            }
+
+            var seasonOffset = (0, 0);
+            if (el.TryGetProperty("SeasonOffset", out var so))
+            {
+                seasonOffset = (
+                    so.TryGetProperty("X", out var sx) ? sx.GetInt32() : 0,
+                    so.TryGetProperty("Y", out var sy) ? sy.GetInt32() : 0);
+            }
+
+            var skins = new Dictionary<string, string>();
+            if (el.TryGetProperty("Skins", out var skinArray) && skinArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var skin in skinArray.EnumerateArray())
+                {
+                    var id = skin.TryGetProperty("Id", out var idEl) ? idEl.GetString() : null;
+                    var skinTexture = TextureFileName(skin.TryGetProperty("Texture", out var stEl) ? stEl.GetString() : null);
+                    if (id is not null && skinTexture is not null)
+                        skins[id] = skinTexture;
+                }
+            }
+
+            result[prop.Name] = new SpriteData(texture, sourceRect, seasonOffset, skins);
+        }
+
+        return result;
+    }
+
+    /// <summary>"Buildings\Stone Pet Bowl" (game's backslash-separated content path) -> "Stone Pet Bowl" (our flat Buildings/ folder's file name).</summary>
+    private static string? TextureFileName(string? contentPath)
+        => contentPath?.Split('\\', '/').LastOrDefault();
+
+    private static int SeasonIndex(string season) => season.ToLowerInvariant() switch
+    {
+        "summer" => 1,
+        "fall" => 2,
+        "winter" => 3,
+        _ => 0,
+    };
+
+    /// <summary>Every skin id this building type has (e.g. Pet Bowl: "Stone Pet Bowl"/"Hay Pet
+    /// Bowl") - empty for the vast majority of buildings, which have none.</summary>
+    public static IReadOnlyList<string> SkinsFor(string buildingType)
+        => Data.TryGetValue(buildingType, out var data) ? data.SkinTextures.Keys.ToList() : Array.Empty<string>();
+
+    public static bool TryGetSprite(string contentFolder, string buildingType, string? skinId, string season, out Bitmap bitmap, out Rect source)
+    {
+        if (!Data.TryGetValue(buildingType, out var data))
+        {
+            // Unknown to Data/Buildings.json (shouldn't happen for anything PlaceableBuildings
+            // offers, but a save could reference a removed/modded type) - fall back to the old
+            // whole-image-by-filename behavior rather than failing outright.
+            return TryGetWholeImage(contentFolder, buildingType, out bitmap, out source);
+        }
+
+        var textureFile = skinId is not null && data.SkinTextures.TryGetValue(skinId, out var skinTexture) ? skinTexture : data.Texture;
+        if (!TryGetWholeImage(contentFolder, textureFile, out bitmap, out var fullBounds))
         {
             source = default;
             return false;
         }
 
-        source = new Rect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height);
+        if (data.SourceRect == default)
+        {
+            source = fullBounds;
+            return true;
+        }
+
+        var seasonIndex = SeasonIndex(season);
+        source = new Rect(
+            data.SourceRect.X + data.SeasonOffset.X * seasonIndex,
+            data.SourceRect.Y + data.SeasonOffset.Y * seasonIndex,
+            data.SourceRect.Width,
+            data.SourceRect.Height);
         return true;
     }
 
-    /// <summary>The raw, uncropped sheet for a building type. Most buildings are one plain
-    /// image and TryGetSprite (the whole bitmap as its own source rect) is all they need, but a
-    /// few - Fish Pond confirmed so far - pack multiple composited layers into one sheet (see
-    /// FarmMapControl.TryDrawBuildingSprite's Fish Pond special case) and need the bitmap
-    /// without an assumed single source rect.</summary>
+    /// <summary>The raw, uncropped sheet for a building's default (non-skinned) texture file.
+    /// Fish Pond composites multiple layers from this sheet itself (see
+    /// FarmMapControl.TryDrawFishPondSprite) and needs the bitmap without an assumed source rect.</summary>
     public static bool TryGetBitmap(string contentFolder, string buildingType, out Bitmap bitmap)
     {
-        var key = contentFolder + "|" + buildingType;
-        if (!Cache.TryGetValue(key, out var cached))
+        var textureFile = Data.TryGetValue(buildingType, out var data) ? data.Texture : buildingType;
+        return TryGetWholeImage(contentFolder, textureFile, out bitmap, out _);
+    }
+
+    private static bool TryGetWholeImage(string contentFolder, string textureFileName, out Bitmap bitmap, out Rect bounds)
+    {
+        var key = contentFolder + "|" + textureFileName;
+        if (!BitmapCache.TryGetValue(key, out var cached))
         {
-            var path = Path.Combine(contentFolder, "Buildings", buildingType + ".png");
+            var path = Path.Combine(contentFolder, "Buildings", textureFileName + ".png");
             cached = File.Exists(path) ? new Bitmap(path) : null;
-            Cache[key] = cached;
+            BitmapCache[key] = cached;
         }
 
-        bitmap = cached!;
-        return cached is not null;
+        if (cached is null)
+        {
+            bitmap = null!;
+            bounds = default;
+            return false;
+        }
+
+        bitmap = cached;
+        bounds = new Rect(0, 0, cached.PixelSize.Width, cached.PixelSize.Height);
+        return true;
     }
 }
