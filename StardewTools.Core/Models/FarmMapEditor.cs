@@ -356,6 +356,7 @@ public sealed class FarmMapEditor
             new XElement("daysOfConstructionLeft", 0),
             new XElement("daysUntilUpgrade", 0),
             new XElement("buildingType", buildingType),
+            BuildingPaintColorEditor.CreateDefault(),
             new XElement("humanDoor", new XElement("X", -1), new XElement("Y", -1)),
             new XElement("animalDoor", new XElement("X", -1), new XElement("Y", -1)),
             new XElement("animalDoorOpen", false),
@@ -364,7 +365,7 @@ public sealed class FarmMapEditor
             new XElement("fadeWhenPlayerIsBehind", true),
             new XElement("owner", 0),
             new XElement("newConstructionTimer", 0),
-            new XElement("skinId", new XAttribute(XsiNil, "true")),
+            new XElement("skinId", new XElement("string", new XAttribute(XsiNil, "true"))),
             // hayCapacity/buildingChests are real Building NetFields previously missing
             // entirely (see MAP_AUDIT.md 2.1) - hayCapacity only matters for Silo (0 is inert
             // for everything else); an empty buildingChests self-heals on next game load
@@ -417,6 +418,7 @@ public sealed class FarmMapEditor
             new XElement("daysOfConstructionLeft", 0),
             new XElement("daysUntilUpgrade", 0),
             new XElement("buildingType", "Farmhouse"),
+            BuildingPaintColorEditor.CreateDefault(),
             new XElement("humanDoor", new XElement("X", 5), new XElement("Y", 2)),
             new XElement("animalDoor", new XElement("X", -1), new XElement("Y", -1)),
             new XElement("animalDoorOpen", false),
@@ -426,7 +428,7 @@ public sealed class FarmMapEditor
             new XElement("owner", 0),
             new XElement("newConstructionTimer", 0),
             new XElement("nonInstancedIndoorsName", "FarmHouse"),
-            new XElement("skinId", new XAttribute(XsiNil, "true")),
+            new XElement("skinId", new XElement("string", new XAttribute(XsiNil, "true"))),
             new XElement("hayCapacity", 0),
             new XElement("buildingChests"));
 

@@ -34,9 +34,24 @@ public sealed record EntityMoveRequest(IReadOnlyList<(MapEntitySummary Entity, T
 
 public partial class MapTabViewModel : ViewModelBase
 {
+    private SaveGameEditor? _save;
     private FarmMapEditor? _map;
+
+    /// <summary>Which real location _map currently represents - null until Bind(). Compared
+    /// against SelectedLocationName to know whether editing tools should be enabled: they were
+    /// hardcoded to "only when SelectedLocationName == Farm" before interior editing existed;
+    /// now it's "only when the currently-bound map IS the currently-selected location", which
+    /// covers Farm and any resolved building interior the same way, and stays false while merely
+    /// browsing an unsupported location's read-only tile art (e.g. Town, Beach).</summary>
+    private string? _mapLocationName;
+
     private ItemListEditor? _inventory;
     private List<MapEntitySummary> _farmEntitiesCache = new();
+
+    /// <summary>Farm -> Greenhouse -> ... breadcrumb for EnterLocation/BackToParentLocation -
+    /// only ever pushed to by entering a building interior, so "back" always means "go up one
+    /// level", never a general location-picker history.</summary>
+    private readonly Stack<string> _locationHistory = new();
 
     /// <summary>Own copy of the parsed map, independent of FarmMapControl's - used only for
     /// tile-placement validation (see CanPlaceFootprint), not rendering, so the ViewModel can
@@ -56,8 +71,16 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty] private string _contentFolder = "";
     [ObservableProperty] private string _extractStatus = "";
     [ObservableProperty] private bool _isExtracting;
-    [ObservableProperty] private string _selectedLocationName = "Farm";
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
+    private string _selectedLocationName = "Farm";
     [ObservableProperty] private int _houseUpgradeLevel;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(BackToParentLocationCommand))]
+    private bool _hasLocationHistory;
+    [ObservableProperty] private string _locationBreadcrumb = "Farm";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
@@ -331,7 +354,7 @@ public partial class MapTabViewModel : ViewModelBase
             { Kind: MapEntityKind.HoeDirt, Source: HoeDirtEditor d } => new HoeDirtDetailsViewModel(value, d, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.ResourceClump, Source: ResourceClumpEditor c } => new ResourceClumpDetailsViewModel(value, c, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity),
-            { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity, EnterLocation, () => HouseUpgradeLevel, v => HouseUpgradeLevel = v),
             { Kind: MapEntityKind.Bush, Source: BushEditor bu } => new BushDetailsViewModel(value, bu, OnEntityEdited, RemoveEntity),
             _ => null,
         };
@@ -417,42 +440,102 @@ public partial class MapTabViewModel : ViewModelBase
         SelectedRange = Array.Empty<MapEntitySummary>();
     }
 
+    /// <summary>Walks every modeled entity kind off a FarmMapEditor - shared by Bind() (for the
+    /// Farm) and OnSelectedLocationNameChanged (for a building interior or any other resolvable
+    /// location), so both end up with an identical entity list built the same way.</summary>
+    private static List<MapEntitySummary> LoadEntitiesFrom(FarmMapEditor map)
+    {
+        var entities = new List<MapEntitySummary>();
+        foreach (var tree in map.Trees) entities.Add(MapEntitySummary.FromTree(tree));
+        foreach (var grass in map.Grass) entities.Add(MapEntitySummary.FromGrass(grass));
+        foreach (var dirt in map.HoeDirtTiles) entities.Add(MapEntitySummary.FromHoeDirt(dirt));
+        foreach (var clump in map.ResourceClumps) entities.Add(MapEntitySummary.FromClump(clump));
+        foreach (var obj in map.Objects) entities.Add(MapEntitySummary.FromObject(obj));
+        foreach (var bush in map.Bushes) entities.Add(MapEntitySummary.FromBush(bush));
+        foreach (var building in map.Buildings) entities.Add(MapEntitySummary.FromBuilding(building));
+        return entities;
+    }
+
+    /// <summary>
+    /// Resolves the newly-selected location by its real name (SaveGameEditor.GetLocationMap,
+    /// which - per BuildingEditor/SaveGameEditor remarks - works for Farm, Greenhouse, FarmHouse,
+    /// and any other top-level location whose &lt;GameLocation&gt; shape FarmMapEditor can read,
+    /// not just ones this tool specifically knows about) and, if resolvable, rebinds _map/
+    /// _mapLocationName and rebuilds Entities from it - this is what makes "enter a building's
+    /// interior" work: EnterLocation just changes SelectedLocationName, and this handles the
+    /// rest the same way it already handles the top-level location picker.
+    /// If NOT resolvable (e.g. Town, Beach - real locations with no placed-entity modeling here),
+    /// _map/_mapLocationName are left as whatever they last were, so the SelectedLocationName ==
+    /// _mapLocationName gate on CanPlaceObject/CanPlaceBuilding/OnClickedTileChanged correctly
+    /// disables editing while still allowing read-only tile art to load below.
+    /// </summary>
     partial void OnSelectedLocationNameChanged(string value)
     {
         Selected = null;
         Entities.Clear();
         TryLoadTmxMap();
 
-        // Only Farm has placed-entity data wired up (trees/objects/clumps) - other locations
-        // show real tile art with no overlay until that's built out per location.
-        if (value == "Farm")
+        if (_save?.GetLocationMap(value) is { } resolvedMap)
+        {
+            _map = resolvedMap;
+            _mapLocationName = value;
+            _farmEntitiesCache = LoadEntitiesFrom(_map);
             foreach (var entity in _farmEntitiesCache)
                 Entities.Add(entity);
+
+            var unmodeled = _map.UnmodeledTerrainFeatures;
+            Summary = unmodeled.Count == 0
+                ? $"{_farmEntitiesCache.Count} placed entities in {value}."
+                : $"{_farmEntitiesCache.Count} placed entities in {value}. Also {unmodeled.Count} tile(s) of " +
+                  $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
+        }
+    }
+
+    partial void OnHouseUpgradeLevelChanged(int value)
+    {
+        if (_save is not null)
+            _save.Player.HouseUpgradeLevel = value;
+    }
+
+    /// <summary>Pushes the current location onto the breadcrumb stack and switches to name -
+    /// called by BuildingDetailsViewModel's "Enter Interior" action. Only ever pushed to by
+    /// entering a building interior, so BackToParentLocation always means "go up one level".</summary>
+    public void EnterLocation(string name)
+    {
+        _locationHistory.Push(SelectedLocationName);
+        HasLocationHistory = true;
+        LocationBreadcrumb = string.Join(" > ", _locationHistory.Reverse().Append(name));
+        SelectedLocationName = name;
+    }
+
+    private bool CanGoBackToParentLocation() => _locationHistory.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanGoBackToParentLocation))]
+    private void BackToParentLocation()
+    {
+        if (_locationHistory.Count == 0)
+            return;
+
+        var parent = _locationHistory.Pop();
+        HasLocationHistory = _locationHistory.Count > 0;
+        LocationBreadcrumb = _locationHistory.Count == 0 ? parent : string.Join(" > ", _locationHistory.Reverse().Append(parent));
+        SelectedLocationName = parent;
     }
 
     public void Bind(SaveGameEditor save)
     {
+        _save = save;
         _map = save.Map;
+        _mapLocationName = "Farm";
         _inventory = save.Player.Inventory;
         Season = save.Season;
         HouseUpgradeLevel = save.Player.HouseUpgradeLevel;
         CurrentDaysPlayed = save.Stats.DaysPlayed;
         Selected = null;
         SelectedRange = Array.Empty<MapEntitySummary>();
-
-        AvailableLocations.Clear();
-        foreach (var name in save.LocationNames.OrderBy(n => n))
-            AvailableLocations.Add(name);
-        SelectedLocationName = AvailableLocations.Contains("Farm") ? "Farm" : AvailableLocations.FirstOrDefault() ?? "Farm";
-        TryLoadTmxMap(); // explicit, not just relying on OnSelectedLocationNameChanged - that partial won't fire above if SelectedLocationName happened to already equal "Farm"
-
-        _farmEntitiesCache = new List<MapEntitySummary>();
-        foreach (var tree in _map.Trees) _farmEntitiesCache.Add(MapEntitySummary.FromTree(tree));
-        foreach (var grass in _map.Grass) _farmEntitiesCache.Add(MapEntitySummary.FromGrass(grass));
-        foreach (var dirt in _map.HoeDirtTiles) _farmEntitiesCache.Add(MapEntitySummary.FromHoeDirt(dirt));
-        foreach (var clump in _map.ResourceClumps) _farmEntitiesCache.Add(MapEntitySummary.FromClump(clump));
-        foreach (var obj in _map.Objects) _farmEntitiesCache.Add(MapEntitySummary.FromObject(obj));
-        foreach (var bush in _map.Bushes) _farmEntitiesCache.Add(MapEntitySummary.FromBush(bush));
+        _locationHistory.Clear();
+        HasLocationHistory = false;
+        LocationBreadcrumb = "Farm";
 
         var buildings = _map.Buildings;
         if (buildings.All(b => b.BuildingType != "Farmhouse"))
@@ -464,10 +547,19 @@ public partial class MapTabViewModel : ViewModelBase
             // nothing to select or move. (59, 12) is Farm.GetStarterFarmhouseLocation() with
             // Farm.tmx's actual FarmHouseEntry fallback of (64, 15) - confirmed Farm.tmx sets no
             // FarmHouseEntry override, so the base game's own hardcoded default applies here too.
-            var farmhouse = _map.AddFarmhouse(new TilePosition(59, 12));
-            buildings = buildings.Append(farmhouse).ToList();
+            // Done before SelectedLocationName is set below so a resolve triggered by that
+            // (OnSelectedLocationNameChanged, when switching saves from a non-Farm location)
+            // sees the farmhouse already present instead of rebuilding entities twice.
+            _map.AddFarmhouse(new TilePosition(59, 12));
         }
-        foreach (var building in buildings) _farmEntitiesCache.Add(MapEntitySummary.FromBuilding(building));
+
+        AvailableLocations.Clear();
+        foreach (var name in save.LocationNames.OrderBy(n => n))
+            AvailableLocations.Add(name);
+        SelectedLocationName = AvailableLocations.Contains("Farm") ? "Farm" : AvailableLocations.FirstOrDefault() ?? "Farm";
+        TryLoadTmxMap(); // explicit, not just relying on OnSelectedLocationNameChanged - that partial won't fire above if SelectedLocationName happened to already equal "Farm"
+
+        _farmEntitiesCache = LoadEntitiesFrom(_map);
 
         Entities.Clear();
         if (SelectedLocationName == "Farm")
@@ -481,7 +573,7 @@ public partial class MapTabViewModel : ViewModelBase
               $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
     }
 
-    private bool CanPlaceObject() => _map is not null && SelectedPlaceableItem is not null && ClickedTile is not null && SelectedLocationName == "Farm";
+    private bool CanPlaceObject() => _map is not null && SelectedPlaceableItem is not null && ClickedTile is not null && SelectedLocationName == _mapLocationName;
 
     /// <summary>Places SelectedPlaceableItem at ClickedTile (last click on the map, set by
     /// FarmMapControl regardless of whether it hit an entity - see FarmMapControl.ClickedTile).
@@ -527,7 +619,7 @@ public partial class MapTabViewModel : ViewModelBase
         Selected = summary;
     }
 
-    private bool CanPlaceBuilding() => _map is not null && SelectedPlaceableBuilding is not null && ClickedTile is not null && SelectedLocationName == "Farm";
+    private bool CanPlaceBuilding() => _map is not null && SelectedPlaceableBuilding is not null && ClickedTile is not null && SelectedLocationName == _mapLocationName;
 
     /// <summary>Places SelectedPlaceableBuilding at ClickedTile - see PlaceableBuildings for
     /// why this is limited to buildings with no interior (Gold Clock, Obelisks, Well, Silo,
@@ -646,7 +738,7 @@ public partial class MapTabViewModel : ViewModelBase
     /// tilled patch or a denser thicket of trees does.</summary>
     partial void OnClickedTileChanged(TilePosition? value)
     {
-        if (value is not { } tile || _map is null || SelectedLocationName != "Farm")
+        if (value is not { } tile || _map is null || SelectedLocationName != _mapLocationName)
             return;
 
         switch (PlacementTool)

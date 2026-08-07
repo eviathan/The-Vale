@@ -238,15 +238,79 @@ public sealed class PlacedObjectDetailsViewModel : MapEntityDetailsViewModel
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromObject(Placed);
 }
 
-/// <summary>BuildingEditor's other fields are unverified (see its own remarks) - Skin is the
-/// one confirmed, real, editable field (see BuildingEditor.SkinId), shown only for building
-/// types that actually have alternate skins (Data/Buildings.json's Skins list - currently just
-/// Pet Bowl among the types this tool can place/edit).</summary>
+/// <summary>Composition over BuildingEditor.PaintColor, same shape as CropDetailsViewModel's
+/// composition over CropEditor - real, confirmed field names (see BuildingPaintColorEditor),
+/// but no confirmed valid Hue/Saturation/Lightness range, so the AXAML ships these as plain
+/// NumericUpDowns with no Maximum rather than a guessed clamp.</summary>
+public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
+{
+    private readonly BuildingPaintColorEditor _paint;
+    private readonly Action _onEdited;
+
+    [ObservableProperty] private bool _color1Default;
+    [ObservableProperty] private int _color1Hue;
+    [ObservableProperty] private int _color1Saturation;
+    [ObservableProperty] private int _color1Lightness;
+    [ObservableProperty] private bool _color2Default;
+    [ObservableProperty] private int _color2Hue;
+    [ObservableProperty] private int _color2Saturation;
+    [ObservableProperty] private int _color2Lightness;
+    [ObservableProperty] private bool _color3Default;
+    [ObservableProperty] private int _color3Hue;
+    [ObservableProperty] private int _color3Saturation;
+    [ObservableProperty] private int _color3Lightness;
+
+    public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, Action onEdited)
+    {
+        _paint = paint;
+        _onEdited = onEdited;
+        _color1Default = paint.Color1Default;
+        _color1Hue = paint.Color1Hue;
+        _color1Saturation = paint.Color1Saturation;
+        _color1Lightness = paint.Color1Lightness;
+        _color2Default = paint.Color2Default;
+        _color2Hue = paint.Color2Hue;
+        _color2Saturation = paint.Color2Saturation;
+        _color2Lightness = paint.Color2Lightness;
+        _color3Default = paint.Color3Default;
+        _color3Hue = paint.Color3Hue;
+        _color3Saturation = paint.Color3Saturation;
+        _color3Lightness = paint.Color3Lightness;
+    }
+
+    partial void OnColor1DefaultChanged(bool value) { _paint.Color1Default = value; _onEdited(); }
+    partial void OnColor1HueChanged(int value) { _paint.Color1Hue = value; _onEdited(); }
+    partial void OnColor1SaturationChanged(int value) { _paint.Color1Saturation = value; _onEdited(); }
+    partial void OnColor1LightnessChanged(int value) { _paint.Color1Lightness = value; _onEdited(); }
+    partial void OnColor2DefaultChanged(bool value) { _paint.Color2Default = value; _onEdited(); }
+    partial void OnColor2HueChanged(int value) { _paint.Color2Hue = value; _onEdited(); }
+    partial void OnColor2SaturationChanged(int value) { _paint.Color2Saturation = value; _onEdited(); }
+    partial void OnColor2LightnessChanged(int value) { _paint.Color2Lightness = value; _onEdited(); }
+    partial void OnColor3DefaultChanged(bool value) { _paint.Color3Default = value; _onEdited(); }
+    partial void OnColor3HueChanged(int value) { _paint.Color3Hue = value; _onEdited(); }
+    partial void OnColor3SaturationChanged(int value) { _paint.Color3Saturation = value; _onEdited(); }
+    partial void OnColor3LightnessChanged(int value) { _paint.Color3Lightness = value; _onEdited(); }
+}
+
+/// <summary>Skin (see BuildingEditor.SkinId) plus the confirmed real spec fields (capacity,
+/// construction state, doors, paint color) and two bigger actions: entering a resolvable
+/// interior (Greenhouse/FarmHouse-style non-instanced case only - see BuildingEditor.
+/// NonInstancedIndoorsName/HasUnsupportedInstancedInterior) and upgrade-tier conversion
+/// (Coop -> Big Coop -> Deluxe Coop, Barn -> Big Barn -> Deluxe Barn - see MapAssets.BuildingsData).
+/// FarmHouse's own "upgrade level" (kitchen/rooms) isn't a Building or interior-location field
+/// at all - it's Player.HouseUpgradeLevel (confirmed via decompiled FarmHouse.upgradeLevel being
+/// [XmlIgnore], reading/writing the owning Farmer instead) - exposed here for the Farmhouse
+/// building specifically via delegates rather than this class reaching into MapTabViewModel
+/// directly, matching the onEdited/onRemove convention already used everywhere else in this file.</summary>
 public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
 {
     private const string DefaultSkinLabel = "(Default)";
 
+    private readonly Action<string> _enterLocation;
+    private readonly Action<int> _setHouseUpgradeLevel;
+
     public BuildingEditor Building { get; }
+    public BuildingPaintColorDetailsViewModel PaintColor { get; }
 
     /// <summary>"(Default)" plus every real skin id for this building type - empty (just the
     /// default entry) for the vast majority of buildings, which have no alternates at all.</summary>
@@ -254,18 +318,78 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     public bool HasSkins => AvailableSkins.Count > 1;
 
     [ObservableProperty] private string _selectedSkin = DefaultSkinLabel;
+    [ObservableProperty] private int _maxOccupants;
+    [ObservableProperty] private int _currentOccupants;
+    [ObservableProperty] private int _daysOfConstructionLeft;
+    [ObservableProperty] private bool _magical;
+    [ObservableProperty] private bool _animalDoorOpen;
+    [ObservableProperty] private int _houseUpgradeLevel;
 
-    public BuildingDetailsViewModel(MapEntitySummary summary, BuildingEditor building, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
+    public bool IsFarmhouse => Building.BuildingType == "Farmhouse";
+
+    /// <summary>True for building types that have SOME interior per Data/Buildings.json -
+    /// covers both the confirmed-editable (non-instanced) and unconfirmed (instanced) cases;
+    /// see HasEnterableInterior/HasUnsupportedInstancedInterior for which is which.</summary>
+    public bool HasInterior => MapAssets.BuildingsData.HasInterior(Building.BuildingType);
+    public bool HasEnterableInterior => Building.NonInstancedIndoorsName is not null;
+    public bool HasUnsupportedInstancedInterior => HasInterior && !HasEnterableInterior;
+
+    public MapAssets.BuildingTierInfo? NextTier => MapAssets.BuildingsData.NextTier(Building.BuildingType);
+    public bool CanUpgrade => NextTier is not null;
+
+    public BuildingDetailsViewModel(MapEntitySummary summary, BuildingEditor building, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove,
+        Action<string> enterLocation, Func<int> getHouseUpgradeLevel, Action<int> setHouseUpgradeLevel)
         : base(summary, onEdited, onRemove)
     {
         Building = building;
+        _enterLocation = enterLocation;
+        _setHouseUpgradeLevel = setHouseUpgradeLevel;
         AvailableSkins = new[] { DefaultSkinLabel }.Concat(MapAssets.BuildingSprites.SkinsFor(building.BuildingType)).ToList();
         _selectedSkin = building.SkinId ?? DefaultSkinLabel;
+        _maxOccupants = building.MaxOccupants;
+        _currentOccupants = building.CurrentOccupants;
+        _daysOfConstructionLeft = building.DaysOfConstructionLeft;
+        _magical = building.Magical;
+        _animalDoorOpen = building.AnimalDoorOpen;
+        _houseUpgradeLevel = getHouseUpgradeLevel();
+        PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, NotifyEdited);
     }
 
     partial void OnSelectedSkinChanged(string value)
     {
         Building.SkinId = value == DefaultSkinLabel ? null : value;
+        NotifyEdited();
+    }
+
+    partial void OnMaxOccupantsChanged(int value) { Building.MaxOccupants = value; NotifyEdited(); }
+    partial void OnCurrentOccupantsChanged(int value) { Building.CurrentOccupants = value; NotifyEdited(); }
+    partial void OnDaysOfConstructionLeftChanged(int value) { Building.DaysOfConstructionLeft = value; NotifyEdited(); }
+    partial void OnMagicalChanged(bool value) { Building.Magical = value; NotifyEdited(); }
+    partial void OnAnimalDoorOpenChanged(bool value) { Building.AnimalDoorOpen = value; NotifyEdited(); }
+
+    /// <summary>Only meaningful when IsFarmhouse - writes through to Player.HouseUpgradeLevel
+    /// via the delegate rather than touching Building/the interior location at all (see class
+    /// remarks on why this isn't a Building field).</summary>
+    partial void OnHouseUpgradeLevelChanged(int value) => _setHouseUpgradeLevel(value);
+
+    [RelayCommand(CanExecute = nameof(HasEnterableInterior))]
+    private void EnterInterior()
+    {
+        if (Building.NonInstancedIndoorsName is { } name)
+            _enterLocation(name);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanUpgrade))]
+    private void UpgradeTier()
+    {
+        if (NextTier is not { } target)
+            return;
+
+        Building.UpgradeTo(target.Name, target.Width, target.Height, target.MaxOccupants);
+        MaxOccupants = target.MaxOccupants;
+        OnPropertyChanged(nameof(NextTier));
+        OnPropertyChanged(nameof(CanUpgrade));
+        UpgradeTierCommand.NotifyCanExecuteChanged();
         NotifyEdited();
     }
 

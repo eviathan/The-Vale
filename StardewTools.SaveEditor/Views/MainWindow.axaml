@@ -489,6 +489,9 @@
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,12,4">
                                         <TextBlock Text="Location" VerticalAlignment="Center"/>
                                         <ComboBox ItemsSource="{Binding AvailableLocations}" SelectedItem="{Binding SelectedLocationName}" Width="140"/>
+                                        <Button Content="&lt; Back" Command="{Binding BackToParentLocationCommand}" IsVisible="{Binding HasLocationHistory}"/>
+                                        <TextBlock Text="{Binding LocationBreadcrumb}" VerticalAlignment="Center" Opacity="0.7"
+                                                    IsVisible="{Binding HasLocationHistory}"/>
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
                                         <TextBlock Text="Assets folder" VerticalAlignment="Center"/>
@@ -710,8 +713,45 @@
                                                         <TextBlock Text="Skin"/>
                                                         <ComboBox ItemsSource="{Binding AvailableSkins}" SelectedItem="{Binding SelectedSkin}" Width="180"/>
                                                     </StackPanel>
-                                                    <TextBlock Text="Most other building fields aren't verified against real save data yet (see README) - not safely editable here."
-                                                               Opacity="0.7" TextWrapping="Wrap"/>
+                                                    <StackPanel Classes="field"><TextBlock Text="Max occupants"/><NumericUpDown Value="{Binding MaxOccupants}" Minimum="-1" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Current occupants"/><NumericUpDown Value="{Binding CurrentOccupants}" Minimum="0" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Days of construction left"/><NumericUpDown Value="{Binding DaysOfConstructionLeft}" Minimum="0" Width="180"/></StackPanel>
+                                                    <CheckBox Content="Magical construction" IsChecked="{Binding Magical}"/>
+                                                    <CheckBox Content="Animal door open" IsChecked="{Binding AnimalDoorOpen}"/>
+
+                                                    <TextBlock Text="Paint color" FontWeight="Bold" Margin="0,6,0,0"/>
+                                                    <StackPanel Spacing="4" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel">
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <CheckBox Content="1: default" IsChecked="{Binding Color1Default}"/>
+                                                            <NumericUpDown Value="{Binding Color1Hue}" Width="90" IsEnabled="{Binding !Color1Default}"/>
+                                                            <NumericUpDown Value="{Binding Color1Saturation}" Width="90" IsEnabled="{Binding !Color1Default}"/>
+                                                            <NumericUpDown Value="{Binding Color1Lightness}" Width="90" IsEnabled="{Binding !Color1Default}"/>
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <CheckBox Content="2: default" IsChecked="{Binding Color2Default}"/>
+                                                            <NumericUpDown Value="{Binding Color2Hue}" Width="90" IsEnabled="{Binding !Color2Default}"/>
+                                                            <NumericUpDown Value="{Binding Color2Saturation}" Width="90" IsEnabled="{Binding !Color2Default}"/>
+                                                            <NumericUpDown Value="{Binding Color2Lightness}" Width="90" IsEnabled="{Binding !Color2Default}"/>
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <CheckBox Content="3: default" IsChecked="{Binding Color3Default}"/>
+                                                            <NumericUpDown Value="{Binding Color3Hue}" Width="90" IsEnabled="{Binding !Color3Default}"/>
+                                                            <NumericUpDown Value="{Binding Color3Saturation}" Width="90" IsEnabled="{Binding !Color3Default}"/>
+                                                            <NumericUpDown Value="{Binding Color3Lightness}" Width="90" IsEnabled="{Binding !Color3Default}"/>
+                                                        </StackPanel>
+                                                        <TextBlock Text="Hue / Saturation / Lightness - valid range not confirmed against real save data" Opacity="0.6" FontSize="11"/>
+                                                    </StackPanel>
+
+                                                    <Button Content="Enter Interior" Command="{Binding EnterInteriorCommand}" IsVisible="{Binding HasEnterableInterior}" Margin="0,6,0,0"/>
+                                                    <TextBlock Text="This building type has an interior, but per-instance Barn/Coop/Shed interiors use an unconfirmed save shape - not editable yet."
+                                                               Opacity="0.7" TextWrapping="Wrap" IsVisible="{Binding HasUnsupportedInstancedInterior}"/>
+
+                                                    <Button Content="{Binding NextTier.Name, StringFormat='Upgrade to {0}'}" Command="{Binding UpgradeTierCommand}" IsVisible="{Binding CanUpgrade}" Margin="0,6,0,0"/>
+
+                                                    <StackPanel Classes="field" IsVisible="{Binding IsFarmhouse}">
+                                                        <TextBlock Text="House upgrade level (kitchen/rooms)"/>
+                                                        <NumericUpDown Value="{Binding HouseUpgradeLevel}" Minimum="0" Maximum="3" Width="180"/>
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
 

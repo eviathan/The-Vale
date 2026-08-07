@@ -42,19 +42,43 @@ public sealed class SaveGameEditor
     public FarmMapEditor Map { get; }
 
     /// <summary>
-    /// Every location this save tracks (Farm, FarmHouse, Town, Beach, Mine, ...) by its
-    /// xsi:type - confirmed real (this save alone has dozens). Only Farm has a typed editor
-    /// with placed-entity access so far; this is what a location picker can offer to at
-    /// least *view* (real tile art, no entity overlay) for everywhere else.
+    /// Every location this save tracks (Farm, FarmHouse, Town, Beach, Mine, ...) by its real,
+    /// unique &lt;name&gt; child element - confirmed real (this save alone has ~90). Previously
+    /// keyed off xsi:type instead, which was wrong two ways, both confirmed against this save's
+    /// real data: many real locations (Greenhouse, JoshHouse, Blacksmith, Saloon, Trailer, ...)
+    /// have no xsi:type attribute at all, so they were 100% invisible to the location picker;
+    /// and xsi:type doesn't even uniquely identify a location where it IS present - Cellar/
+    /// Cellar2/Cellar3/Cellar4 all share xsi:type="Cellar". The real &lt;name&gt; is also exactly
+    /// what Building.NonInstancedIndoorsName references (see FindLocationElement/GetLocationMap),
+    /// so this fix is a prerequisite for building-interior editing, not just a picker nicety.
     /// </summary>
     public IReadOnlyList<string> LocationNames
         => _saveFile.Root.Element("locations")?.Elements("GameLocation")
-            .Select(e => (string?)e.Attribute(XsiType))
-            .Where(name => name is not null)
+            .Select(e => (string?)e.Element("name"))
+            .Where(name => !string.IsNullOrEmpty(name))
             .Select(name => name!)
-            .Distinct()
             .ToList()
         ?? new List<string>();
+
+    /// <summary>The raw &lt;GameLocation&gt; element for a location by its real, unique name -
+    /// confirmed how Building.NonInstancedIndoorsName references its interior (e.g. Greenhouse's
+    /// building points at the top-level location literally named "Greenhouse", not by xsi:type).</summary>
+    public XElement? FindLocationElement(string locationName)
+        => _saveFile.Root.Element("locations")?.Elements("GameLocation")
+            .FirstOrDefault(e => (string?)e.Element("name") == locationName);
+
+    /// <summary>
+    /// A FarmMapEditor for any top-level location by its real name, not just Farm - confirmed
+    /// that Greenhouse's and FarmHouse's &lt;GameLocation&gt; elements are structurally identical
+    /// to Farm's for every field FarmMapEditor reads (objects/terrainFeatures/
+    /// largeTerrainFeatures/buildings/resourceClumps, same order), so no changes to FarmMapEditor
+    /// itself were needed to support this. Null when the name doesn't resolve to a real location -
+    /// covers both "no such location" and the per-instance-&lt;indoors&gt; case (Barn/Coop/Shed),
+    /// which isn't in the top-level &lt;locations&gt; list at all and has no real save evidence to
+    /// confirm its shape against, so it's deliberately not attempted here.
+    /// </summary>
+    public FarmMapEditor? GetLocationMap(string locationName)
+        => FindLocationElement(locationName) is { } element ? new FarmMapEditor(element) : null;
 
     public string Season
     {
