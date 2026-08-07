@@ -11,7 +11,7 @@
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="StardewTools"
-        Width="1680" Height="1000" MinWidth="820" MinHeight="600" WindowStartupLocation="CenterScreen">
+        Width="1680" Height="1000" MinWidth="1150" MinHeight="600" WindowStartupLocation="CenterScreen">
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
@@ -36,16 +36,16 @@
             <Setter Property="Height" Value="48"/>
             <Setter Property="Margin" Value="2"/>
             <Setter Property="BorderThickness" Value="2"/>
-            <Setter Property="BorderBrush" Value="#555"/>
-            <Setter Property="Background" Value="#2A2A2A"/>
+            <Setter Property="BorderBrush" Value="{StaticResource WoodMidBrush}"/>
+            <Setter Property="Background" Value="{StaticResource WoodDarkBrush}"/>
             <Setter Property="CornerRadius" Value="4"/>
         </Style>
         <Style Selector="Border.invSlot.locked">
-            <Setter Property="Background" Value="#1A1A1A"/>
+            <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}"/>
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
         <Style Selector="Border.invSlot.selected">
-            <Setter Property="BorderBrush" Value="#4FC3F7"/>
+            <Setter Property="BorderBrush" Value="{StaticResource SelectionBrush}"/>
         </Style>
     </Window.Styles>
 
@@ -132,80 +132,92 @@
                     </TabItem>
 
                     <TabItem Header="Inventory">
-                        <Grid ColumnDefinitions="220,*,240" Margin="0,10,0,0" DataContext="{Binding Inventory}" x:DataType="vm:InventoryTabViewModel">
+                        <Grid ColumnDefinitions="240,*,260" Margin="0,10,0,0" DataContext="{Binding Inventory}" x:DataType="vm:InventoryTabViewModel">
 
                             <!-- Left: browsable/searchable item picker - drag onto a grid slot, or select + Add -->
-                            <DockPanel Grid.Column="0">
-                                <TextBlock DockPanel.Dock="Top" Text="Add item" FontWeight="Bold" Margin="0,0,0,6"/>
-                                <TextBox DockPanel.Dock="Top" Text="{Binding ItemSearchText}" Watermark="Search items..." Margin="0,0,0,6"/>
-                                <Button DockPanel.Dock="Bottom" Content="Add to first empty slot" Command="{Binding AddSelectedItemCommand}"
-                                        HorizontalAlignment="Stretch" Margin="0,6,0,0"/>
-                                <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
-                                           Text="Drag an item onto the grid, or select one and click Add. Only plain items/machines are fabricatable here - tools, rings, and similar can only be duplicated from ones you already carry."/>
-                                <ListBox Name="PickerList" ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedPickerItem}">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal" Spacing="6" PointerPressed="OnPickerItemPointerPressed">
-                                                <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
-                                                       Width="24" Height="24" Stretch="Uniform"/>
-                                                <TextBlock Text="{Binding}" VerticalAlignment="Center" TextWrapping="Wrap"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </DockPanel>
+                            <controls:StardewPanel Grid.Column="0" Margin="0,0,8,0">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="Add item" FontWeight="Bold" Margin="0,0,0,6"/>
+                                    <TextBox DockPanel.Dock="Top" Text="{Binding ItemSearchText}" Watermark="Search items..." Margin="0,0,0,6"/>
+                                    <Button DockPanel.Dock="Bottom" Content="Add to first empty slot" Command="{Binding AddSelectedItemCommand}"
+                                            HorizontalAlignment="Stretch" Margin="0,6,0,0"/>
+                                    <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Text="Drag an item onto the grid, or select one and click Add. Only plain items/machines are fabricatable here - tools, rings, and similar can only be duplicated from ones you already carry."/>
+                                    <ListBox Name="PickerList" ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedPickerItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Spacing="6" PointerPressed="OnPickerItemPointerPressed">
+                                                    <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                           Width="24" Height="24" Stretch="Uniform"/>
+                                                    <TextBlock Text="{Binding}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </controls:StardewPanel>
 
                             <!-- Center: the grid itself, 12 columns x up to 3 rows, matching the real inventory menu -->
-                            <DockPanel Grid.Column="1" Margin="16,0">
-                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
-                                    <TextBlock Text="Backpack size" VerticalAlignment="Center"/>
-                                    <ComboBox ItemsSource="{Binding BackpackSizes}" SelectedItem="{Binding SelectedBackpackSize}" Width="180"/>
-                                </StackPanel>
-                                <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Foreground="#E57373" TextWrapping="Wrap" Margin="0,0,0,10"
-                                           IsVisible="{Binding StatusMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
-                                <ItemsControl Name="InventoryGrid" ItemsSource="{Binding Slots}" DragDrop.AllowDrop="True">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <UniformGrid Columns="12" Rows="3"/>
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:InventorySlotViewModel">
-                                            <Border Classes="invSlot" Classes.locked="{Binding IsLocked}" Classes.selected="{Binding IsSelected}"
-                                                    PointerPressed="OnSlotPointerPressed">
-                                                <Grid IsVisible="{Binding !IsLocked}">
-                                                    <Image Source="{Binding Item, Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
-                                                           Width="32" Height="32" Stretch="Uniform"/>
-                                                    <TextBlock Text="{Binding Item.Stack}" IsVisible="{Binding Item.IsStackable}"
-                                                               HorizontalAlignment="Right" VerticalAlignment="Bottom" FontSize="11" Margin="0,0,2,1"/>
-                                                </Grid>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </DockPanel>
+                            <controls:StardewPanel Grid.Column="1" Margin="0,0,8,0">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+                                        <TextBlock Text="Backpack size" VerticalAlignment="Center"/>
+                                        <ComboBox ItemsSource="{Binding BackpackSizes}" SelectedItem="{Binding SelectedBackpackSize}" Width="180"/>
+                                    </StackPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Foreground="{StaticResource AccentRedBrush}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                               IsVisible="{Binding StatusMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
+                                    <ItemsControl Name="InventoryGrid" ItemsSource="{Binding Slots}" DragDrop.AllowDrop="True">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <UniformGrid Columns="12" Rows="3"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:InventorySlotViewModel">
+                                                <Border Classes="invSlot" Classes.locked="{Binding IsLocked}" Classes.selected="{Binding IsSelected}"
+                                                        PointerPressed="OnSlotPointerPressed">
+                                                    <Grid IsVisible="{Binding !IsLocked}">
+                                                        <Image Source="{Binding Item, Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
+                                                               Width="32" Height="32" Stretch="Uniform"/>
+                                                        <Border Classes="qtyBadge" IsVisible="{Binding Item.IsStackable}">
+                                                            <TextBlock Classes="qtyBadge" Text="{Binding Item.Stack}"/>
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </DockPanel>
+                            </controls:StardewPanel>
 
                             <!-- Right: properties for the selected slot -->
-                            <ScrollViewer Grid.Column="2">
-                                <StackPanel Spacing="8" IsVisible="{Binding SelectedSlot.Item, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
-                                    <StackPanel Spacing="8" DataContext="{Binding SelectedSlot.Item}" x:DataType="vm:ItemRowViewModel">
-                                        <TextBlock Text="Selected item" FontWeight="Bold"/>
-                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap"/>
-                                        <TextBlock Text="{Binding ItemType}" Opacity="0.6" FontSize="11"/>
-                                        <StackPanel Classes="field">
-                                            <TextBlock Text="Stack"/>
-                                            <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="140" FormatString="0" IsEnabled="{Binding IsStackable}"/>
+                            <controls:StardewPanel Grid.Column="2">
+                                <ScrollViewer>
+                                    <StackPanel Spacing="8" IsVisible="{Binding SelectedSlot.Item, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                        <StackPanel Spacing="8" DataContext="{Binding SelectedSlot.Item}" x:DataType="vm:ItemRowViewModel">
+                                            <TextBlock Text="Selected item" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding Name}" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding ItemType}" Opacity="0.6" FontSize="11"/>
+                                            <StackPanel Classes="field">
+                                                <TextBlock Text="Stack"/>
+                                                <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="140" FormatString="0" IsEnabled="{Binding IsStackable}"/>
+                                            </StackPanel>
+                                            <TextBlock Text="Not stackable - this item class only ever holds 1 per slot in the real game." Opacity="0.6" FontSize="11" TextWrapping="Wrap"
+                                                       IsVisible="{Binding !IsStackable}"/>
+                                            <StackPanel Classes="field" IsVisible="{Binding HasQuality}">
+                                                <TextBlock Text="Quality"/>
+                                                <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="140"/>
+                                            </StackPanel>
+                                            <Button Command="{Binding RemoveCommand}" HorizontalAlignment="Left">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <controls:StardewIcon Kind="Trash" IconSize="14"/>
+                                                    <TextBlock Text="Remove from slot"/>
+                                                </StackPanel>
+                                            </Button>
                                         </StackPanel>
-                                        <TextBlock Text="Not stackable - this item class only ever holds 1 per slot in the real game." Opacity="0.6" FontSize="11" TextWrapping="Wrap"
-                                                   IsVisible="{Binding !IsStackable}"/>
-                                        <StackPanel Classes="field" IsVisible="{Binding HasQuality}">
-                                            <TextBlock Text="Quality"/>
-                                            <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="140"/>
-                                        </StackPanel>
-                                        <Button Content="Remove from slot" Command="{Binding RemoveCommand}"/>
                                     </StackPanel>
-                                </StackPanel>
-                            </ScrollViewer>
+                                </ScrollViewer>
+                            </controls:StardewPanel>
                         </Grid>
                     </TabItem>
 
@@ -408,55 +420,76 @@
                     </TabItem>
 
                     <TabItem Header="Storage">
-                        <Grid ColumnDefinitions="220,*,240" Margin="0,10,0,0" DataContext="{Binding Storage}" x:DataType="vm:StorageTabViewModel">
-                            <ListBox Grid.Column="0" ItemsSource="{Binding Chests}" SelectedItem="{Binding SelectedChest}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ChestRowViewModel">
-                                        <TextBlock Text="{Binding Label}"/>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <DockPanel Grid.Column="1" Margin="16,0,0,0" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
-                                <TextBlock DockPanel.Dock="Top" Text="Select a chest on the left." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNull}}"/>
-                                <TextBlock DockPanel.Dock="Top" Text="This chest is empty - add something from the right." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           IsVisible="{Binding ChestIsEmpty}"/>
-                                <ItemsControl ItemsSource="{Binding SelectedChestItems}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:ItemRowViewModel">
-                                            <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <TextBlock Text="{Binding ItemType}" Width="90"/>
-                                                    <TextBlock Text="{Binding Name}" Width="120"/>
-                                                    <TextBlock Text="Stack" VerticalAlignment="Center"/>
-                                                    <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="110" FormatString="0" IsEnabled="{Binding IsStackable}"/>
-                                                    <TextBlock Text="Quality" VerticalAlignment="Center" IsVisible="{Binding HasQuality}"/>
-                                                    <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsVisible="{Binding HasQuality}"/>
-                                                    <Button Content="Remove" Command="{Binding RemoveCommand}"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </DockPanel>
-
-                            <StackPanel Grid.Column="2" Margin="16,0,0,0" Spacing="6" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
-                                <TextBlock Text="Add item to chest" FontWeight="Bold"/>
-                                <TextBox Text="{Binding ItemSearchText}" Watermark="Search items..."/>
-                                <ListBox ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedNewItem}" Height="400">
+                        <Grid ColumnDefinitions="240,*,260" Margin="0,10,0,0" DataContext="{Binding Storage}" x:DataType="vm:StorageTabViewModel">
+                            <controls:StardewPanel Grid.Column="0" Margin="0,0,8,0">
+                                <ListBox ItemsSource="{Binding Chests}" SelectedItem="{Binding SelectedChest}">
                                     <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
-                                                       Width="20" Height="20" Stretch="Uniform"/>
-                                                <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
-                                            </StackPanel>
+                                        <DataTemplate x:DataType="vm:ChestRowViewModel">
+                                            <TextBlock Text="{Binding Label}"/>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <Button Content="Add" Command="{Binding AddItemCommand}" HorizontalAlignment="Stretch"/>
-                            </StackPanel>
+                            </controls:StardewPanel>
+
+                            <controls:StardewPanel Grid.Column="1" Margin="0,0,8,0" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="Select a chest on the left." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
+                                               IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNull}}"/>
+                                    <TextBlock DockPanel.Dock="Top" Text="This chest is empty - add something from the right." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
+                                               IsVisible="{Binding ChestIsEmpty}"/>
+                                    <ScrollViewer>
+                                        <ItemsControl ItemsSource="{Binding SelectedChestItems}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:ItemRowViewModel">
+                                                    <Border BorderBrush="{StaticResource WoodMidBrush}" BorderThickness="0,0,0,1" Padding="0,4">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <Grid Width="32" Height="32">
+                                                                <Image Source="{Binding Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
+                                                                       Width="32" Height="32" Stretch="Uniform"/>
+                                                                <Border Classes="qtyBadge" IsVisible="{Binding IsStackable}">
+                                                                    <TextBlock Classes="qtyBadge" Text="{Binding Stack}"/>
+                                                                </Border>
+                                                            </Grid>
+                                                            <TextBlock Text="{Binding Name}" Width="140" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                            <TextBlock Text="Stack" VerticalAlignment="Center"/>
+                                                            <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="110" FormatString="0" IsEnabled="{Binding IsStackable}"/>
+                                                            <TextBlock Text="Quality" VerticalAlignment="Center" IsVisible="{Binding HasQuality}"/>
+                                                            <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsVisible="{Binding HasQuality}"/>
+                                                            <Button Command="{Binding RemoveCommand}">
+                                                                <controls:StardewIcon Kind="Trash" IconSize="14"/>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+                            </controls:StardewPanel>
+
+                            <controls:StardewPanel Grid.Column="2" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="Add item to chest" FontWeight="Bold" Margin="0,0,0,6"/>
+                                    <TextBox DockPanel.Dock="Top" Text="{Binding ItemSearchText}" Watermark="Search items..." Margin="0,0,0,6"/>
+                                    <Button DockPanel.Dock="Bottom" Command="{Binding AddItemCommand}" HorizontalAlignment="Stretch" Margin="0,6,0,0">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                            <controls:StardewIcon Kind="Plus" IconSize="12"/>
+                                            <TextBlock Text="Add"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <ListBox ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedNewItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                           Width="20" Height="20" Stretch="Uniform"/>
+                                                    <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </controls:StardewPanel>
                         </Grid>
                     </TabItem>
 
@@ -489,7 +522,12 @@
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,12,4">
                                         <TextBlock Text="Location" VerticalAlignment="Center"/>
                                         <ComboBox ItemsSource="{Binding AvailableLocations}" SelectedItem="{Binding SelectedLocationName}" Width="140"/>
-                                        <Button Content="&lt; Back" Command="{Binding BackToParentLocationCommand}" IsVisible="{Binding HasLocationHistory}"/>
+                                        <Button Command="{Binding BackToParentLocationCommand}" IsVisible="{Binding HasLocationHistory}">
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <controls:StardewIcon Kind="ArrowLeft" IconSize="12"/>
+                                                <TextBlock Text="Back"/>
+                                            </StackPanel>
+                                        </Button>
                                         <TextBlock Text="{Binding LocationBreadcrumb}" VerticalAlignment="Center" Opacity="0.7"
                                                     IsVisible="{Binding HasLocationHistory}"/>
                                     </StackPanel>
@@ -611,7 +649,7 @@
                                                    Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
                                     </StackPanel>
 
-                                    <TextBlock Text="{Binding PlacementBlockedMessage}" Foreground="#E57373" TextWrapping="Wrap" FontSize="11"
+                                    <TextBlock Text="{Binding PlacementBlockedMessage}" Foreground="{StaticResource AccentRedBrush}" TextWrapping="Wrap" FontSize="11"
                                                Margin="0,6,0,0" IsVisible="{Binding PlacementBlockedMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
 
                                     <StackPanel Spacing="6" IsVisible="{Binding PendingPlacement, Converter={x:Static conv:ObjectConverters.IsNotNull}}"
@@ -671,7 +709,7 @@
                                                     <ContentControl Content="{Binding Crop}" IsVisible="{Binding Crop, Converter={x:Static conv:ObjectConverters.IsNotNull}}" Margin="0,8,0,0">
                                                         <ContentControl.DataTemplates>
                                                             <DataTemplate DataType="vm:CropDetailsViewModel">
-                                                                <Border BorderBrush="Gray" BorderThickness="0,1,0,0" Padding="0,8,0,0">
+                                                                <Border BorderBrush="{StaticResource WoodMidBrush}" BorderThickness="0,1,0,0" Padding="0,8,0,0">
                                                                     <StackPanel Spacing="6">
                                                                         <TextBlock Text="Crop" FontWeight="Bold"/>
                                                                         <StackPanel Classes="field"><TextBlock Text="Growth phase"/><NumericUpDown Value="{Binding CurrentPhase}" Minimum="0" Maximum="6" Width="180"/></StackPanel>
@@ -702,6 +740,13 @@
 
                                             <DataTemplate DataType="vm:PlacedObjectDetailsViewModel">
                                                 <StackPanel Spacing="6" DataContext="{Binding Item}">
+                                                    <Grid Width="40" Height="40" HorizontalAlignment="Left">
+                                                        <Image Source="{Binding Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
+                                                               Width="40" Height="40" Stretch="Uniform"/>
+                                                        <Border Classes="qtyBadge" IsVisible="{Binding IsStackable}">
+                                                            <TextBlock Classes="qtyBadge" Text="{Binding Stack}"/>
+                                                        </Border>
+                                                    </Grid>
                                                     <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="180" IsEnabled="{Binding IsStackable}"/></StackPanel>
                                                     <StackPanel Classes="field" IsVisible="{Binding HasQuality}"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180"/></StackPanel>
                                                 </StackPanel>
@@ -709,40 +754,60 @@
 
                                             <DataTemplate DataType="vm:BuildingDetailsViewModel">
                                                 <StackPanel Spacing="6">
-                                                    <StackPanel Classes="field" IsVisible="{Binding HasSkins}">
+                                                    <StackPanel Spacing="2" IsVisible="{Binding HasSkins}">
                                                         <TextBlock Text="Skin"/>
-                                                        <ComboBox ItemsSource="{Binding AvailableSkins}" SelectedItem="{Binding SelectedSkin}" Width="180"/>
+                                                        <ComboBox ItemsSource="{Binding AvailableSkins}" SelectedItem="{Binding SelectedSkin}" HorizontalAlignment="Stretch"/>
                                                     </StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Max occupants"/><NumericUpDown Value="{Binding MaxOccupants}" Minimum="-1" Width="180"/></StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Current occupants"/><NumericUpDown Value="{Binding CurrentOccupants}" Minimum="0" Width="180"/></StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Days of construction left"/><NumericUpDown Value="{Binding DaysOfConstructionLeft}" Minimum="0" Width="180"/></StackPanel>
+                                                    <StackPanel Spacing="2"><TextBlock Text="Max occupants"/><NumericUpDown Value="{Binding MaxOccupants}" Minimum="-1" HorizontalAlignment="Stretch"/></StackPanel>
+                                                    <StackPanel Spacing="2"><TextBlock Text="Current occupants"/><NumericUpDown Value="{Binding CurrentOccupants}" Minimum="0" HorizontalAlignment="Stretch"/></StackPanel>
+                                                    <StackPanel Spacing="2"><TextBlock Text="Days of construction left"/><NumericUpDown Value="{Binding DaysOfConstructionLeft}" Minimum="0" HorizontalAlignment="Stretch"/></StackPanel>
                                                     <CheckBox Content="Magical construction" IsChecked="{Binding Magical}"/>
                                                     <CheckBox Content="Animal door open" IsChecked="{Binding AnimalDoorOpen}"/>
 
                                                     <TextBlock Text="Paint color" FontWeight="Bold" Margin="0,6,0,0"/>
-                                                    <StackPanel Spacing="4" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel">
-                                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                                            <CheckBox Content="1: default" IsChecked="{Binding Color1Default}"/>
-                                                            <NumericUpDown Value="{Binding Color1Hue}" Width="90" IsEnabled="{Binding !Color1Default}"/>
-                                                            <NumericUpDown Value="{Binding Color1Saturation}" Width="90" IsEnabled="{Binding !Color1Default}"/>
-                                                            <NumericUpDown Value="{Binding Color1Lightness}" Width="90" IsEnabled="{Binding !Color1Default}"/>
+                                                    <StackPanel Spacing="8" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel">
+                                                        <StackPanel Spacing="2">
+                                                            <CheckBox Content="Color 1: default" IsChecked="{Binding Color1Default}"/>
+                                                            <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color1Default}">
+                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color1Hue}" Width="58"/>
+                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color1Saturation}" Width="58"/>
+                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color1Lightness}" Width="58"/>
+                                                            </StackPanel>
                                                         </StackPanel>
-                                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                                            <CheckBox Content="2: default" IsChecked="{Binding Color2Default}"/>
-                                                            <NumericUpDown Value="{Binding Color2Hue}" Width="90" IsEnabled="{Binding !Color2Default}"/>
-                                                            <NumericUpDown Value="{Binding Color2Saturation}" Width="90" IsEnabled="{Binding !Color2Default}"/>
-                                                            <NumericUpDown Value="{Binding Color2Lightness}" Width="90" IsEnabled="{Binding !Color2Default}"/>
+                                                        <StackPanel Spacing="2">
+                                                            <CheckBox Content="Color 2: default" IsChecked="{Binding Color2Default}"/>
+                                                            <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color2Default}">
+                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color2Hue}" Width="58"/>
+                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color2Saturation}" Width="58"/>
+                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color2Lightness}" Width="58"/>
+                                                            </StackPanel>
                                                         </StackPanel>
-                                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                                            <CheckBox Content="3: default" IsChecked="{Binding Color3Default}"/>
-                                                            <NumericUpDown Value="{Binding Color3Hue}" Width="90" IsEnabled="{Binding !Color3Default}"/>
-                                                            <NumericUpDown Value="{Binding Color3Saturation}" Width="90" IsEnabled="{Binding !Color3Default}"/>
-                                                            <NumericUpDown Value="{Binding Color3Lightness}" Width="90" IsEnabled="{Binding !Color3Default}"/>
+                                                        <StackPanel Spacing="2">
+                                                            <CheckBox Content="Color 3: default" IsChecked="{Binding Color3Default}"/>
+                                                            <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color3Default}">
+                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color3Hue}" Width="58"/>
+                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color3Saturation}" Width="58"/>
+                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
+                                                                <NumericUpDown Value="{Binding Color3Lightness}" Width="58"/>
+                                                            </StackPanel>
                                                         </StackPanel>
-                                                        <TextBlock Text="Hue / Saturation / Lightness - valid range not confirmed against real save data" Opacity="0.6" FontSize="11"/>
+                                                        <TextBlock Text="Hue / Saturation / Lightness - valid range not confirmed against real save data" Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
                                                     </StackPanel>
 
-                                                    <Button Content="Enter Interior" Command="{Binding EnterInteriorCommand}" IsVisible="{Binding HasEnterableInterior}" Margin="0,6,0,0"/>
+                                                    <Button Command="{Binding EnterInteriorCommand}" IsVisible="{Binding HasEnterableInterior}" Margin="0,6,0,0" HorizontalAlignment="Left">
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <TextBlock Text="Enter Interior"/>
+                                                            <controls:StardewIcon Kind="ArrowRight" IconSize="12"/>
+                                                        </StackPanel>
+                                                    </Button>
                                                     <TextBlock Text="This building type has an interior, but per-instance Barn/Coop/Shed interiors use an unconfirmed save shape - not editable yet."
                                                                Opacity="0.7" TextWrapping="Wrap" IsVisible="{Binding HasUnsupportedInstancedInterior}"/>
 
@@ -770,7 +835,12 @@
                                         </ContentControl.DataTemplates>
                                     </ContentControl>
 
-                                    <Button Content="Remove" Command="{Binding SelectedDetails.RemoveCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}"/>
+                                    <Button Command="{Binding SelectedDetails.RemoveCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}" HorizontalAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <controls:StardewIcon Kind="Trash" IconSize="14"/>
+                                            <TextBlock Text="Remove"/>
+                                        </StackPanel>
+                                    </Button>
 
                                     <TextBlock Text="Tile info" FontWeight="Bold" Margin="0,10,0,0"
                                                IsVisible="{Binding #FarmMap.SelectedTileInfo, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>

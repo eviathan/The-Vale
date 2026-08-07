@@ -823,6 +823,49 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        if (entity.Kind == MapEntityKind.HoeDirt && entity.Source is HoeDirtEditor dirt
+            && !string.IsNullOrEmpty(ContentFolder)
+            && HoeDirtSprites.TryGetBitmap(ContentFolder, out var dirtBitmap))
+        {
+            var dx = pixelOffsetX + entity.Position.X * scale;
+            var dy = pixelOffsetY + entity.Position.Y * scale;
+            var dirtRect = new Rect(dx, dy, scale, scale);
+            context.DrawImage(dirtBitmap, HoeDirtSprites.DrySource, dirtRect);
+            if (dirt.State is 1 or 2)
+            {
+                var overlaySource = dirt.State == 2 ? HoeDirtSprites.PaddyOverlaySource : HoeDirtSprites.WateredOverlaySource;
+                context.DrawImage(dirtBitmap, overlaySource, dirtRect);
+            }
+
+            var dirtBounds = dirtRect;
+            if (dirt.Crop is { } crop
+                && CropSprites.TryGetSprite(ContentFolder, crop.RowInSpriteSheet, crop.CurrentPhase, crop.Dead, crop.FullGrown, crop.DayOfCurrentPhase, entity.Position.X, entity.Position.Y, out var cropBitmap, out var cropSource))
+            {
+                // Anchor exactly like the real game (Crop.draw(): draw origin (8,24) in the
+                // 16x32 source, scale 4, positioned at the tile's top-left) - not bottom-anchored
+                // like a tree/bush, since a crop's "root" sits higher in its sprite than that.
+                var pixelsPerSourcePixel = scale / 16.0;
+                var cropWidth = cropSource.Width * pixelsPerSourcePixel;
+                var cropHeight = cropSource.Height * pixelsPerSourcePixel;
+                var cropRect = new Rect(dx - 8 * pixelsPerSourcePixel, dy - 24 * pixelsPerSourcePixel, cropWidth, cropHeight);
+
+                if (crop.Flip)
+                {
+                    using (context.PushTransform(FlipHorizontalAround(cropRect)))
+                        context.DrawImage(cropBitmap, cropSource, cropRect);
+                }
+                else
+                {
+                    context.DrawImage(cropBitmap, cropSource, cropRect);
+                }
+
+                dirtBounds = dirtBounds.Union(cropRect);
+            }
+
+            Record(dirtBounds);
+            return;
+        }
+
         // Multi-tile entities (buildings) fill their real footprint; everything else gets a
         // marker slightly smaller than one tile.
         var isFootprint = entity.Width > 1 || entity.Height > 1;
@@ -847,62 +890,100 @@ public sealed class FarmMapControl : Control
     }
 
     /// <summary>
-    /// Draws a tree's current-growth-stage sprite anchored at the tile's bottom-center (matching
-    /// how the game positions trees - base on the tile, canopy extending up and to both sides).
-    /// Stages 0-4 use TreeSprites.TryGetGrowthStageSprite (entirely different, smaller sprites -
-    /// not a scaled-down adult), stage 5 uses TryGetAdultSprite gated on the tree's real HasMoss
-    /// field, and a stump uses TryGetStumpSprite - the three are mutually exclusive, matching
-    /// Tree.draw()'s own growthStage/stump branching. Returns false (caller falls back to the
-    /// marker) for tree types we haven't mapped to a real sprite sheet.
+    /// Draws a tree's current-growth-stage sprite - reproduces Tree.draw()'s real layering, not
+    /// just its adult canopy rect. Stages 0-4 are a single sprite (TryGetGrowthStageSprite),
+    /// bottom-anchored to the tile - confirmed against Tree.draw()'s position/origin math to
+    /// reduce to exactly that for these stages. Stage 5 (adult) is genuinely TWO layered
+    /// sprites in the real game, not one: a trunk/stump graphic (Tree.cs's stumpSourceRect,
+    /// (32,96,16,32) - the SAME sprite a chopped-down stump uses) drawn first, positioned one
+    /// tile ABOVE the tree's own tile with no bottom-anchoring, THEN the canopy
+    /// (treeTopSourceRect, (X,0,48,96) - not the cropped (X,4,48,80) this used to use) drawn on
+    /// top, bottom-anchored one tile BELOW. Skipping the trunk layer (the previous version of
+    /// this method did) is exactly why a real user report called planted/existing trees "missing
+    /// stumps" - every living tree has a visible trunk peeking out below its canopy in the real
+    /// game, not just chopped ones. An actual chopped stump (tree.Stump) draws ONLY the trunk
+    /// layer, no canopy - also using the corrected position (previously it reused the adult
+    /// canopy's bottom-anchor formula, which is real-game-wrong for the trunk sprite's own
+    /// origin/position). Returns false (caller falls back to the marker) for tree types we
+    /// haven't mapped to a real sprite sheet.
     /// </summary>
     private bool TryDrawTreeSprite(DrawingContext context, TreeEditor tree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
     {
-        bool found;
-        Bitmap bitmap;
-        Rect source;
+        var pixelsPerSourcePixel = scale / 16.0;
+        var tileLeft = pixelOffsetX + position.X * scale;
+        var tileTop = pixelOffsetY + position.Y * scale;
+        var tileBottom = tileTop + scale;
+
+        void DrawLayer(Bitmap bitmap, Rect source, Rect dest)
+        {
+            if (tree.Flipped)
+            {
+                using (context.PushTransform(FlipHorizontalAround(dest)))
+                    context.DrawImage(bitmap, source, dest);
+            }
+            else
+            {
+                context.DrawImage(bitmap, source, dest);
+            }
+        }
+
+        if (tree.GrowthStage < 5 && !tree.Stump)
+        {
+            if (!TreeSprites.TryGetGrowthStageSprite(ContentFolder!, tree.TreeType, Season, tree.GrowthStage, out var youngBitmap, out var youngSource))
+            {
+                drawnBounds = default;
+                return false;
+            }
+
+            var width = youngSource.Width * pixelsPerSourcePixel;
+            var height = youngSource.Height * pixelsPerSourcePixel;
+            var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
+            DrawLayer(youngBitmap, youngSource, dest);
+            drawnBounds = dest;
+            return true;
+        }
 
         if (tree.Stump)
         {
-            found = TreeSprites.TryGetStumpSprite(ContentFolder!, tree.TreeType, Season, out bitmap, out source);
-        }
-        else if (tree.GrowthStage < 5)
-        {
-            found = TreeSprites.TryGetGrowthStageSprite(ContentFolder!, tree.TreeType, Season, tree.GrowthStage, out bitmap, out source);
-        }
-        else
-        {
-            found = TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, tree.HasMoss, out bitmap, out source);
+            if (!TreeSprites.TryGetStumpSprite(ContentFolder!, tree.TreeType, Season, tree.HasMoss, out var stumpBitmap, out var stumpSource))
+            {
+                drawnBounds = default;
+                return false;
+            }
+
+            // Real position: Vector2(tileX*64, tileY*64-64), origin Vector2.Zero - one tile
+            // above the tree's own tile, top-left anchored (not bottom-anchored).
+            var stumpWidth = stumpSource.Width * pixelsPerSourcePixel;
+            var stumpHeight = stumpSource.Height * pixelsPerSourcePixel;
+            var stumpDest = new Rect(tileLeft, tileTop - scale, stumpWidth, stumpHeight);
+            DrawLayer(stumpBitmap, stumpSource, stumpDest);
+            drawnBounds = stumpDest;
+            return true;
         }
 
-        if (!found)
+        // Living adult tree: trunk first (mostly hidden behind the canopy, visible only where
+        // the canopy art has transparent gaps near its base), canopy on top.
+        if (!TreeSprites.TryGetStumpSprite(ContentFolder!, tree.TreeType, Season, tree.HasMoss, out var trunkBitmap, out var trunkSource)
+            || !TreeSprites.TryGetAdultSprite(ContentFolder!, tree.TreeType, Season, tree.HasMoss, out var canopyBitmap, out var canopySource))
         {
             drawnBounds = default;
             return false;
         }
 
-        var pixelsPerSourcePixel = scale / 16.0;
-        var width = source.Width * pixelsPerSourcePixel;
-        var height = source.Height * pixelsPerSourcePixel;
+        var trunkWidth = trunkSource.Width * pixelsPerSourcePixel;
+        var trunkHeight = trunkSource.Height * pixelsPerSourcePixel;
+        var trunkDest = new Rect(tileLeft, tileTop - scale, trunkWidth, trunkHeight);
+        DrawLayer(trunkBitmap, trunkSource, trunkDest);
 
-        var tileLeft = pixelOffsetX + position.X * scale;
-        var tileBottom = pixelOffsetY + position.Y * scale + scale;
-        var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
+        // Real position: Vector2(tileX*64+32, tileY*64+64), origin (24,96) of a 48x96 source -
+        // works out to bottom-center-anchored exactly at the tree's own tile bottom (the tall
+        // canopy - 6 source-tile-cells - extends upward from there, well past the trunk above).
+        var canopyWidth = canopySource.Width * pixelsPerSourcePixel;
+        var canopyHeight = canopySource.Height * pixelsPerSourcePixel;
+        var canopyDest = new Rect(tileLeft + scale / 2 - canopyWidth / 2, tileBottom - canopyHeight, canopyWidth, canopyHeight);
+        DrawLayer(canopyBitmap, canopySource, canopyDest);
 
-        // Every tree/stump draw in the real game passes flipped ? SpriteEffects.FlipHorizontally
-        // : None (Tree.cs) - Tree.Flipped is a real, persisted per-tree field (randomized once
-        // at creation, already editable in the details panel) that previously had zero visual
-        // effect since nothing here ever read it.
-        if (tree.Flipped)
-        {
-            using (context.PushTransform(FlipHorizontalAround(dest)))
-                context.DrawImage(bitmap, source, dest);
-        }
-        else
-        {
-            context.DrawImage(bitmap, source, dest);
-        }
-
-        drawnBounds = dest;
+        drawnBounds = trunkDest.Union(canopyDest);
         return true;
     }
 
@@ -1008,16 +1089,33 @@ public sealed class FarmMapControl : Control
     }
 
     /// <summary>
-    /// Fish Pond's own sheet (Buildings/Fish Pond.png) only holds the stone rim - unlike every
-    /// other building here, the game composites the water in separately at draw time, so
-    /// drawing just the rim (the generic single-image path above) leaves the pond's interior
-    /// see-through. Verified against the decompiled FishPond.draw(): it fills Rectangle(0, 80,
-    /// 80, 80) from its own sheet - a pre-shaped water silhouette, drawn as an opacity mask here
-    /// since Avalonia has no SpriteBatch-style color tint - with Color(60, 126, 150) (the
-    /// game's own default water tint, used whenever a pond has no special override color), THEN
-    /// the rim itself (Rectangle(0, 0, 80, 80)) on top. The animated ripple overlay and per-pond
-    /// netting style the real game also draws are cosmetic layers on top of this and are
-    /// skipped - BuildingEditor doesn't track a netting style field yet.
+    /// Fish Pond's own sheet (Buildings/Fish Pond.png) only holds the stone rim and netting -
+    /// unlike every other building here, the game composites the water in separately at draw
+    /// time, so drawing just the rim (the generic single-image path above) leaves the pond's
+    /// interior see-through. Verified against the decompiled FishPond.draw(): it draws a grid of
+    /// real water tiles (Game1.mouseCursors, Rectangle(0,2064,64,64) - confirmed real cell, used
+    /// here as a single static frame rather than the live-animation-state-dependent version -
+    /// waterPosition bobbing/4-frame ripple cycle/per-tile flip aren't meaningful for a static
+    /// render) FIRST, unclipped/unmasked, THEN the rim (Rectangle(0,0,80,80) - confirmed via
+    /// direct pixel inspection to have a transparent hollow center, not a solid fill) on top,
+    /// letting the rim's own real transparency naturally crop the water to the pond's rounded
+    /// silhouette - exactly the real game's own technique (layered draw order, not a mask).
+    /// An earlier version of this used Avalonia's PushOpacityMask + a tiled ImageBrush instead,
+    /// which rendered correctly in this project's own headless RenderTargetBitmap test harness
+    /// but never actually showed water in the real, live GPU-composited app window per a real
+    /// user report (confirmed not a stale-build/stale-process issue - reproduced after a full
+    /// IDE + app restart) - a real divergence between offscreen and live rendering for that
+    /// specific Avalonia API combination on this platform. This version avoids PushOpacityMask
+    /// entirely, using only plain sequential DrawImage calls (the same primitive every other
+    /// sprite in this file already uses successfully) plus a plain rectangular PushClip (just to
+    /// keep the water grid from bleeding past the pond's own footprint - the rounded-corner crop
+    /// comes from the rim's layering, not this clip).
+    /// THEN the netting (Rectangle(80, nettingStyle*48, 80, 48), origin (0,80) - the same anchor
+    /// point as the rim/water despite its own shorter 48px height, positioned 2 tiles above the
+    /// pond's bottom edge) draped over the top edge (nettingStyle isn't tracked as an editable
+    /// field yet - no real save has a Fish Pond to confirm it against - so this always draws
+    /// style 0, the real field's own default). Fish/sign are deeper, unverified-field-dependent
+    /// layers and are still skipped.
     /// </summary>
     private bool TryDrawFishPondSprite(DrawingContext context, TilePosition position, int width, int height, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
     {
@@ -1035,16 +1133,57 @@ public sealed class FarmMapControl : Control
         var footprintBottom = pixelOffsetY + position.Y * scale + height * scale;
         var dest = new Rect(footprintLeft + width * scale / 2 - destSize / 2, footprintBottom - destSize, destSize, destSize);
 
-        var waterMask = new ImageBrush(bitmap)
+        // Flat tint + real animated water texture, both confined to a rect safely INSET from the
+        // full 80x80 box - not the full box itself. Confirmed by direct pixel inspection of Fish
+        // Pond.png (not assumed): the rim's transparent "hollow" area doesn't start right at the
+        // (0,0,80,80) box's own edges - there's a real ~16px transparent MARGIN around the rim
+        // sprite's own outline first (most visible at the top, where the netting posts attach).
+        // An earlier version used the FULL box for the water layers, relying only on the rim's
+        // hollow-center transparency (drawn after) to crop it - which left that margin's worth
+        // of water visibly peeking out past the actual stone border (a real user report: "water
+        // ... overlapping the pond edges"). This inset keeps both water layers safely within the
+        // confirmed-hollow interior instead.
+        // (The OTHER real asset here, Rectangle(0,80,80,80) - "a pre-shaped water silhouette" -
+        // was considered as a guaranteed-correct-shape base layer instead of this inset
+        // approach, but direct pixel inspection found it's pure grayscale (R=G=B on every
+        // opaque pixel, no blue at all) - the real game tints it via a SpriteBatch color
+        // multiply, which Avalonia's DrawingContext has no equivalent for without reaching for
+        // the same kind of mask/effect API already found unreliable in the live app. Skipped
+        // rather than guessed at.)
+        // Measured directly (row-by-row alpha scan of the real sprite, not a single guessed
+        // margin): the hollow's stable interior spans source Y 15-66, with the left/right edges
+        // varying roughly 14-18 and 63-66 across those rows - and the transition from "narrow"
+        // (row 13, ~20px wide) to "full width" (row 15, ~48px wide) happens over just those 2
+        // rows, i.e. the real corner curve is tight/sharp, not a gentle arc. A 12px clip radius
+        // (this method's second fix) was rounder than that real corner, cutting away more than
+        // the rim actually does and reading as "water doesn't reach the corners" (a real user
+        // report). Tighter inset + a much smaller radius here instead.
+        var waterDest = new Rect(dest.X + 10 * pixelsPerSourcePixel, dest.Y + 11 * pixelsPerSourcePixel,
+            dest.Width - 20 * pixelsPerSourcePixel, dest.Height - 21 * pixelsPerSourcePixel);
+        var waterClip = new RoundedRect(waterDest, 5 * pixelsPerSourcePixel);
+        using (context.PushClip(waterClip))
         {
-            SourceRect = new RelativeRect(0, 80, frameSize, frameSize, RelativeUnit.Absolute),
-            Stretch = Stretch.Fill,
-        };
-        using (context.PushOpacityMask(waterMask, dest))
-            context.FillRectangle(new SolidColorBrush(Color.FromRgb(60, 126, 150)), dest);
+            context.FillRectangle(new SolidColorBrush(Color.FromRgb(60, 126, 150)), waterDest);
+            if (MenuChrome.Cursors is { } cursors)
+            {
+                var waterSource = new Rect(0, 2064, 64, 64);
+                for (var ty = waterDest.Y; ty < waterDest.Bottom; ty += scale)
+                    for (var tx = waterDest.X; tx < waterDest.Right; tx += scale)
+                        context.DrawImage(cursors, waterSource, new Rect(tx, ty, scale, scale));
+            }
+        }
 
+        // Rim on top, full size - crops the water layers above to the pond's exact rounded
+        // shape (its real transparent hollow center, confirmed by direct pixel inspection).
         context.DrawImage(bitmap, new Rect(0, 0, frameSize, frameSize), dest);
-        drawnBounds = dest;
+
+        const int nettingStyle = 0;
+        var nettingHeight = 48 * pixelsPerSourcePixel;
+        var nettingSource = new Rect(80, nettingStyle * 48, 80, 48);
+        var nettingDest = new Rect(dest.X, footprintBottom - 2 * scale - destSize, destSize, nettingHeight);
+        context.DrawImage(bitmap, nettingSource, nettingDest);
+
+        drawnBounds = dest.Union(nettingDest);
         return true;
     }
 

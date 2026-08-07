@@ -1,0 +1,171 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:StardewTools.SaveEditor.Controls">
+
+  <!--
+    Real Stardew Valley palette, sampled directly from the game's own bundled UI textures
+    rather than picked by eye - see MenuChrome.cs remarks and the plan this was built from
+    (melodic-crafting-treasure.md) for exactly which pixels each color came from:
+      WoodDark/WoodMid/WoodHighlight/Parchment - Maps/MenuTiles.png's dialog-border art
+        (the same source rect StardewPanel renders as its 9-slice chrome).
+      AccentGreen - LooseSprites/Cursors.png's OK/checkmark icon.
+      AccentRed - LooseSprites/Cursors.png's close/X button icon.
+    TextDark/AppBackground are DERIVED (darkened shades) from WoodDark, not raw samples of
+    their own - called out here so "real asset" and "derived from a real asset" aren't
+    conflated later.
+  -->
+  <Styles.Resources>
+    <Color x:Key="WoodDarkColor">#853605</Color>
+    <Color x:Key="WoodMidColor">#B14E05</Color>
+    <Color x:Key="WoodHighlightColor">#FA9305</Color>
+    <Color x:Key="ParchmentColor">#FFC576</Color>
+    <Color x:Key="AccentGreenColor">#236111</Color>
+    <Color x:Key="AccentRedColor">#D43200</Color>
+    <Color x:Key="TextDarkColor">#4A2500</Color>
+    <Color x:Key="AppBackgroundColor">#2B1B10</Color>
+
+    <SolidColorBrush x:Key="WoodDarkBrush" Color="{StaticResource WoodDarkColor}"/>
+    <SolidColorBrush x:Key="WoodMidBrush" Color="{StaticResource WoodMidColor}"/>
+    <SolidColorBrush x:Key="WoodHighlightBrush" Color="{StaticResource WoodHighlightColor}"/>
+    <SolidColorBrush x:Key="ParchmentBrush" Color="{StaticResource ParchmentColor}"/>
+    <SolidColorBrush x:Key="AccentGreenBrush" Color="{StaticResource AccentGreenColor}"/>
+    <SolidColorBrush x:Key="AccentRedBrush" Color="{StaticResource AccentRedColor}"/>
+    <SolidColorBrush x:Key="TextDarkBrush" Color="{StaticResource TextDarkColor}"/>
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="{StaticResource AppBackgroundColor}"/>
+
+    <!-- Selection/badge chrome - reuses the palette rather than the old ad-hoc "#4FC3F7" blue. -->
+    <SolidColorBrush x:Key="SelectionBrush" Color="{StaticResource WoodHighlightColor}"/>
+
+    <!--
+      CheckBox is fully retemplated rather than palette-patched over the default Fluent theme -
+      the Fluent CheckBox's internal check-glyph brushes are baked into compiled theme resources
+      this project has no access to (not shipped as loose XAML, so there was no real resource key
+      to safely target - guessing one risked exactly the wrong-color/wrong-size bug already
+      reported). This template fully owns its visuals instead: a small fixed-size box (so it
+      never stretches to match a longer label - the reported "not scaled to fit contents" bug
+      came from an earlier attempt that painted a Background across the CheckBox's whole
+      templated bounds, which include the label) plus a checkmark Path shown only via the real
+      CheckBox `:checked` pseudo-class, and a separate ContentPresenter for the label.
+    -->
+    <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Border Name="Box" Width="18" Height="18" VerticalAlignment="Center"
+                    CornerRadius="3" BorderThickness="2"
+                    Background="{StaticResource WoodDarkBrush}"
+                    BorderBrush="{StaticResource WoodMidBrush}">
+              <Path Name="CheckGlyph" Stretch="Uniform" Margin="3" IsVisible="False"
+                    Data="M0,4 L3,7 L8,0"
+                    Stroke="{StaticResource ParchmentBrush}" StrokeThickness="2"
+                    StrokeLineCap="Round" StrokeJoin="Round"/>
+            </Border>
+            <ContentPresenter Name="PART_ContentPresenter"
+                               Content="{TemplateBinding Content}"
+                               ContentTemplate="{TemplateBinding ContentTemplate}"
+                               Foreground="{TemplateBinding Foreground}"
+                               VerticalAlignment="Center"/>
+          </StackPanel>
+        </ControlTemplate>
+      </Setter>
+      <Style Selector="^:checked /template/ Path#CheckGlyph">
+        <Setter Property="IsVisible" Value="True"/>
+      </Style>
+      <Style Selector="^:disabled">
+        <Setter Property="Opacity" Value="0.5"/>
+      </Style>
+    </ControlTheme>
+  </Styles.Resources>
+
+  <!--
+    Text color is deliberately NOT set via a blanket "Style Selector=TextBlock" setter - that was
+    tried first and was the actual bug reported ("text is yellow, the UI is also yellow"): a
+    single fixed TextBlock.Foreground can't be right both on the dark window background AND on
+    StardewPanel's light parchment-textured background at the same time. Instead, Foreground is
+    set once per *background context* (Window = dark bg -> light default text; StardewPanel =
+    light bg -> dark default text; Button = dark wood bg -> light text) and left to inherit down
+    to child TextBlocks that don't set their own - the same mechanism WPF/Avalonia's TextElement
+    inheritance is built for. Anything that still looks wrong after this is a missing per-context
+    override, not something a global TextBlock color can fix without breaking some other context.
+  -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}"/>
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+  </Style>
+
+  <Style Selector="controls|StardewPanel">
+    <Setter Property="Foreground" Value="{StaticResource TextDarkBrush}"/>
+  </Style>
+
+  <Style Selector="Button">
+    <Setter Property="Background" Value="{StaticResource WoodMidBrush}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource WoodDarkBrush}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+    <Setter Property="Padding" Value="10,5"/>
+  </Style>
+  <Style Selector="Button:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource WoodHighlightBrush}"/>
+  </Style>
+  <Style Selector="Button:pressed /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource WoodDarkBrush}"/>
+  </Style>
+  <Style Selector="Button:disabled /template/ ContentPresenter">
+    <Setter Property="Opacity" Value="0.5"/>
+  </Style>
+
+  <Style Selector="TabControl">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="TabItem">
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="TabItem:selected /template/ Border">
+    <Setter Property="Background" Value="{StaticResource WoodMidBrush}"/>
+  </Style>
+
+  <Style Selector="TextBox, ComboBox, NumericUpDown">
+    <Setter Property="Background" Value="{StaticResource WoodDarkBrush}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource WoodMidBrush}"/>
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource WoodMidBrush}"/>
+  </Style>
+  <!-- A selected row's background is always dark wood, regardless of whether the ListBox sits
+       inside a light StardewPanel (dark text by default) or directly on the dark window
+       background (light text by default) - force light text there so selection never lands on
+       the same dark-on-dark trap the original bug report was about. -->
+  <Style Selector="ListBoxItem:selected TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+  </Style>
+
+  <!-- Reusable item-quantity badge - a small chip anchored over the bottom-right corner of an
+       item icon (Grid with the Image as the first child, this Border as the second), used
+       anywhere a stackable item's count needs to read clearly over a busy/light icon instead of
+       the old bare unstyled TextBlock. -->
+  <Style Selector="Border.qtyBadge">
+    <Setter Property="Background" Value="{StaticResource WoodDarkBrush}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource WoodHighlightBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="3"/>
+    <Setter Property="Padding" Value="3,0"/>
+    <Setter Property="HorizontalAlignment" Value="Right"/>
+    <Setter Property="VerticalAlignment" Value="Bottom"/>
+    <Setter Property="Margin" Value="0,0,1,1"/>
+    <Setter Property="MinWidth" Value="15"/>
+  </Style>
+  <Style Selector="TextBlock.qtyBadge">
+    <Setter Property="Foreground" Value="{StaticResource ParchmentBrush}"/>
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+  </Style>
+
+</Styles>

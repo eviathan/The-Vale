@@ -96,9 +96,13 @@ public static class GameEnums
     };
 
     /// <summary>
-    /// Not verified against real save data beyond confirming treeType is an int (TreeEditor
-    /// remarks) - only 1/2/3 are confirmed to have real sprite art (TreeSprites.KnownTypeFiles).
-    /// Everything else here is general Stardew modding knowledge, not cross-checked.
+    /// Confirmed real ids and names against the actual Data/WildTrees.json (not general modding
+    /// knowledge) - a previous version of this list had 9/10/11 each off by one relative to the
+    /// real data (9 was labeled "Green rain (Oak)" but is really a second Palm variant - real
+    /// Data/WildTrees.json key "9" -> texture tree_palm2 with no green-rain relation at all -
+    /// while the real green-rain Oak/Maple/Pine are 10/11/12, and 12 was missing from this list
+    /// entirely) and TreeSprites.cs only had real sprite art for 1/2/3 - both now fixed together
+    /// (TreeSprites.cs is now data-driven off Data/WildTrees.json itself, covering every id here).
     /// </summary>
     public static readonly IReadOnlyList<NamedValue> TreeTypes = new[]
     {
@@ -108,9 +112,10 @@ public static class GameEnums
         new NamedValue(6, "Desert palm"),
         new NamedValue(7, "Mushroom tree"),
         new NamedValue(8, "Mahogany"),
-        new NamedValue(9, "Green rain (Oak)"),
-        new NamedValue(10, "Green rain (Maple)"),
-        new NamedValue(11, "Green rain (Pine)"),
+        new NamedValue(9, "Palm (Ginger Island)"),
+        new NamedValue(10, "Green rain (Oak)"),
+        new NamedValue(11, "Green rain (Maple)"),
+        new NamedValue(12, "Green rain (Pine)"),
         new NamedValue(13, "Mystic tree"),
     };
 
