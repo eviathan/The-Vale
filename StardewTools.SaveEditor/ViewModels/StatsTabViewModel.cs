@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using StardewTools.Core.Models;
 
@@ -5,8 +8,23 @@ namespace StardewTools.SaveEditor.ViewModels;
 
 public partial class StatsTabViewModel : ViewModelBase
 {
+    /// <summary>The 14 fields already broken out as named properties below - excluded from
+    /// AllStats so nothing shows up twice.</summary>
+    private static readonly HashSet<string> CuratedFieldNames = new()
+    {
+        "daysPlayed", "stepsTaken", "monstersKilled", "itemsShipped", "itemsCrafted", "itemsCooked",
+        "questsCompleted", "timesFished", "trufflesFound", "diamondsFound", "goldFound", "iridiumFound",
+        "totalMoneyGifted", "individualMoneyEarned",
+    };
+
     private StatsEditor? _stats;
     private bool _isBound;
+
+    /// <summary>Every other real stat (fishCaught, seedsSown, stoneGathered, ...) - see
+    /// StatsEditor.AllFieldNames. ~38 more fields covered here that the curated list above never
+    /// exposed at all - most notably fishCaught (fish actually caught), distinct from TimesFished
+    /// (rod casts) which was the only fishing-related stat previously settable.</summary>
+    public ObservableCollection<StatRowViewModel> AllStats { get; } = new();
 
     [ObservableProperty] private int _daysPlayed;
     [ObservableProperty] private int _stepsTaken;
@@ -42,6 +60,10 @@ public partial class StatsTabViewModel : ViewModelBase
         IridiumFound = _stats.IridiumFound;
         TotalMoneyGifted = _stats.TotalMoneyGifted;
         IndividualMoneyEarned = _stats.IndividualMoneyEarned;
+
+        AllStats.Clear();
+        foreach (var field in _stats.AllFieldNames.Where(f => !CuratedFieldNames.Contains(f)).OrderBy(f => f))
+            AllStats.Add(new StatRowViewModel(field, _stats));
 
         _isBound = true;
     }

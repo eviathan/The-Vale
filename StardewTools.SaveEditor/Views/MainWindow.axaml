@@ -30,7 +30,48 @@
             <Setter Property="Width" Value="180"/>
             <Setter Property="FormatString" Value="0"/>
         </Style>
+
+        <Style Selector="Border.invSlot">
+            <Setter Property="Width" Value="48"/>
+            <Setter Property="Height" Value="48"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#555"/>
+            <Setter Property="Background" Value="#2A2A2A"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+        <Style Selector="Border.invSlot.locked">
+            <Setter Property="Background" Value="#1A1A1A"/>
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+        <Style Selector="Border.invSlot.selected">
+            <Setter Property="BorderBrush" Value="#4FC3F7"/>
+        </Style>
     </Window.Styles>
+
+    <Window.Resources>
+        <!-- Shared by every Collections sub-tab (Shipping/Minerals/Cooking) - one
+             CollectionSectionViewModel instance per tab, see MainWindow.axaml.cs for the
+             generic (section-agnostic) double-click handlers. -->
+        <DataTemplate x:Key="CollectionSectionTemplate" x:DataType="vm:CollectionSectionViewModel">
+            <Grid Margin="0,10,0,0" RowDefinitions="Auto,Auto,*,Auto,Auto,*" ColumnDefinitions="*" MaxWidth="420" HorizontalAlignment="Left">
+                <TextBlock Grid.Row="0" Text="Not collected" FontWeight="Bold"/>
+                <TextBox Grid.Row="1" Text="{Binding SearchText}" Watermark="Search..." Margin="0,4,0,4"/>
+                <ListBox Grid.Row="2" ItemsSource="{Binding Available}"
+                         SelectionMode="Multiple" SelectedItems="{Binding SelectedAvailableItems}"
+                         DoubleTapped="OnCollectionAvailableDoubleTapped"/>
+                <TextBlock Grid.Row="3" Text="{Binding Collected.Count, StringFormat='Collected ({0}) - double-click, or select (shift/ctrl/cmd-click, cmd-A for all) + Add/Remove'}"
+                           FontWeight="Bold" Margin="0,10,0,4" TextWrapping="Wrap"/>
+                <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+                    <Button Content="Add ->" Command="{Binding AddCommand}"/>
+                    <Button Content="&lt;- Remove" Command="{Binding RemoveCommand}"/>
+                </StackPanel>
+                <ListBox Grid.Row="5" ItemsSource="{Binding Collected}"
+                         SelectionMode="Multiple" SelectedItems="{Binding SelectedCollectedItems}"
+                         DoubleTapped="OnCollectionCollectedDoubleTapped"/>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
 
     <TabControl>
         <TabItem Header="Save File">
@@ -91,32 +132,81 @@
                     </TabItem>
 
                     <TabItem Header="Inventory">
-                        <DockPanel Margin="0,10,0,0" DataContext="{Binding Inventory}" x:DataType="vm:InventoryTabViewModel">
-                            <StackPanel DockPanel.Dock="Bottom" Classes="field" Margin="0,10,0,0">
-                                <TextBlock Text="Duplicate selected, stack:"/>
-                                <NumericUpDown Value="{Binding DuplicateStack}" Minimum="1" Maximum="999" Width="100" FormatString="0"/>
-                                <Button Content="Duplicate" Command="{Binding DuplicateSelectedCommand}"/>
-                            </StackPanel>
-                            <TextBlock DockPanel.Dock="Top" Opacity="0.7" TextWrapping="Wrap" Margin="0,0,0,10"
-                                       Text="Duplicating copies a real item already in your inventory - safe, since it's never a fabricated item type. Empty slots are reused automatically."/>
-                            <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ItemRowViewModel">
-                                        <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <TextBlock Text="{Binding ItemType}" Width="90"/>
-                                                <TextBlock Text="{Binding Name}" Width="140"/>
-                                                <TextBlock Text="Stack" VerticalAlignment="Center"/>
-                                                <NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="120" FormatString="0"/>
-                                                <TextBlock Text="Quality" VerticalAlignment="Center"/>
-                                                <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="120" IsEnabled="{Binding HasQuality}"/>
-                                                <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+                        <Grid ColumnDefinitions="220,*,240" Margin="0,10,0,0" DataContext="{Binding Inventory}" x:DataType="vm:InventoryTabViewModel">
+
+                            <!-- Left: browsable/searchable item picker - drag onto a grid slot, or select + Add -->
+                            <DockPanel Grid.Column="0">
+                                <TextBlock DockPanel.Dock="Top" Text="Add item" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox DockPanel.Dock="Top" Text="{Binding ItemSearchText}" Watermark="Search items..." Margin="0,0,0,6"/>
+                                <Button DockPanel.Dock="Bottom" Content="Add to first empty slot" Command="{Binding AddSelectedItemCommand}"
+                                        HorizontalAlignment="Stretch" Margin="0,6,0,0"/>
+                                <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                                           Text="Drag an item onto the grid, or select one and click Add. Only plain items/machines are fabricatable here - tools, rings, and similar can only be duplicated from ones you already carry."/>
+                                <ListBox Name="PickerList" ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedPickerItem}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="6" PointerPressed="OnPickerItemPointerPressed">
+                                                <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                       Width="24" Height="24" Stretch="Uniform"/>
+                                                <TextBlock Text="{Binding}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                                             </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+
+                            <!-- Center: the grid itself, 12 columns x up to 3 rows, matching the real inventory menu -->
+                            <DockPanel Grid.Column="1" Margin="16,0">
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+                                    <TextBlock Text="Backpack size" VerticalAlignment="Center"/>
+                                    <ComboBox ItemsSource="{Binding BackpackSizes}" SelectedItem="{Binding SelectedBackpackSize}" Width="180"/>
+                                </StackPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Foreground="#E57373" TextWrapping="Wrap" Margin="0,0,0,10"
+                                           IsVisible="{Binding StatusMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
+                                <ItemsControl Name="InventoryGrid" ItemsSource="{Binding Slots}" DragDrop.AllowDrop="True">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="12" Rows="3"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:InventorySlotViewModel">
+                                            <Border Classes="invSlot" Classes.locked="{Binding IsLocked}" Classes.selected="{Binding IsSelected}"
+                                                    PointerPressed="OnSlotPointerPressed">
+                                                <Grid IsVisible="{Binding !IsLocked}">
+                                                    <Image Source="{Binding Item, Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
+                                                           Width="32" Height="32" Stretch="Uniform"/>
+                                                    <TextBlock Text="{Binding Item.Stack}" IsVisible="{Binding Item.IsStackable}"
+                                                               HorizontalAlignment="Right" VerticalAlignment="Bottom" FontSize="11" Margin="0,0,2,1"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </DockPanel>
+
+                            <!-- Right: properties for the selected slot -->
+                            <ScrollViewer Grid.Column="2">
+                                <StackPanel Spacing="8" IsVisible="{Binding SelectedSlot.Item, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                    <StackPanel Spacing="8" DataContext="{Binding SelectedSlot.Item}" x:DataType="vm:ItemRowViewModel">
+                                        <TextBlock Text="Selected item" FontWeight="Bold"/>
+                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding ItemType}" Opacity="0.6" FontSize="11"/>
+                                        <StackPanel Classes="field">
+                                            <TextBlock Text="Stack"/>
+                                            <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="140" FormatString="0" IsEnabled="{Binding IsStackable}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Not stackable - this item class only ever holds 1 per slot in the real game." Opacity="0.6" FontSize="11" TextWrapping="Wrap"
+                                                   IsVisible="{Binding !IsStackable}"/>
+                                        <StackPanel Classes="field" IsVisible="{Binding HasQuality}">
+                                            <TextBlock Text="Quality"/>
+                                            <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="140"/>
+                                        </StackPanel>
+                                        <Button Content="Remove from slot" Command="{Binding RemoveCommand}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
                     </TabItem>
 
                     <TabItem Header="Stats">
@@ -136,6 +226,20 @@
                                 <StackPanel Classes="field"><TextBlock Text="Iridium Found"/><NumericUpDown Value="{Binding IridiumFound}" Minimum="0" Maximum="999999"/></StackPanel>
                                 <StackPanel Classes="field"><TextBlock Text="Total Money Gifted"/><NumericUpDown Value="{Binding TotalMoneyGifted}" Minimum="0" Maximum="999999999"/></StackPanel>
                                 <StackPanel Classes="field"><TextBlock Text="Lifetime Earnings"/><NumericUpDown Value="{Binding IndividualMoneyEarned}" Minimum="0" Maximum="999999999"/></StackPanel>
+
+                                <TextBlock Text="All other stats" FontWeight="Bold" Margin="0,12,0,0"/>
+                                <TextBlock Text="Every other real tracked stat (fishCaught, seedsSown, stoneGathered, ...) - not hand-picked, read directly from the save's own &lt;stats&gt; element."
+                                           Opacity="0.6" FontSize="11" TextWrapping="Wrap" Width="500"/>
+                                <ItemsControl ItemsSource="{Binding AllStats}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:StatRowViewModel">
+                                            <StackPanel Classes="field">
+                                                <TextBlock Text="{Binding Label}"/>
+                                                <NumericUpDown Value="{Binding Value}" Minimum="0" Maximum="999999999"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -153,24 +257,158 @@
                         </StackPanel>
                     </TabItem>
 
+                    <TabItem Header="Recipes">
+                        <Grid ColumnDefinitions="*,*" Margin="0,10,0,0" DataContext="{Binding Recipes}" x:DataType="vm:RecipesTabViewModel">
+                            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*,Auto,Auto,*" ColumnDefinitions="*">
+                                <TextBlock Grid.Row="0" Text="Crafting - not known" FontWeight="Bold"/>
+                                <TextBox Grid.Row="1" Text="{Binding CraftingSearchText}" Watermark="Search..." Margin="0,4,0,4"/>
+                                <ListBox Grid.Row="2" Name="AvailableCraftingList" ItemsSource="{Binding AvailableCrafting}"
+                                         SelectionMode="Multiple" SelectedItems="{Binding SelectedAvailableCraftingItems}"
+                                         DoubleTapped="OnAvailableCraftingDoubleTapped"/>
+                                <TextBlock Grid.Row="3" Text="{Binding KnownCrafting.Count, StringFormat='Known ({0}) - double-click, or select (shift/ctrl/cmd-click, cmd-A for all) + Add/Remove'}"
+                                           FontWeight="Bold" Margin="0,10,0,4" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+                                    <Button Content="Add ->" Command="{Binding AddCraftingCommand}"/>
+                                    <Button Content="&lt;- Remove" Command="{Binding RemoveCraftingCommand}"/>
+                                </StackPanel>
+                                <ListBox Grid.Row="5" ItemsSource="{Binding KnownCrafting}"
+                                         SelectionMode="Multiple" SelectedItems="{Binding SelectedKnownCraftingItems}"
+                                         DoubleTapped="OnKnownCraftingDoubleTapped"/>
+                            </Grid>
+                            <Grid Grid.Column="1" Margin="16,0,0,0" RowDefinitions="Auto,Auto,*,Auto,Auto,*" ColumnDefinitions="*">
+                                <TextBlock Grid.Row="0" Text="Cooking - not known" FontWeight="Bold"/>
+                                <TextBox Grid.Row="1" Text="{Binding CookingSearchText}" Watermark="Search..." Margin="0,4,0,4"/>
+                                <ListBox Grid.Row="2" ItemsSource="{Binding AvailableCooking}"
+                                         SelectionMode="Multiple" SelectedItems="{Binding SelectedAvailableCookingItems}"
+                                         DoubleTapped="OnAvailableCookingDoubleTapped"/>
+                                <TextBlock Grid.Row="3" Text="{Binding KnownCooking.Count, StringFormat='Known ({0}) - double-click, or select (shift/ctrl/cmd-click, cmd-A for all) + Add/Remove'}"
+                                           FontWeight="Bold" Margin="0,10,0,4" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+                                    <Button Content="Add ->" Command="{Binding AddCookingCommand}"/>
+                                    <Button Content="&lt;- Remove" Command="{Binding RemoveCookingCommand}"/>
+                                </StackPanel>
+                                <ListBox Grid.Row="5" ItemsSource="{Binding KnownCooking}"
+                                         SelectionMode="Multiple" SelectedItems="{Binding SelectedKnownCookingItems}"
+                                         DoubleTapped="OnKnownCookingDoubleTapped"/>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="Collections">
+                        <TabControl Margin="0,10,0,0" DataContext="{Binding Collections}" x:DataType="vm:CollectionsTabViewModel">
+                            <TabItem Header="Shipping">
+                                <ContentControl Content="{Binding Shipping}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </TabItem>
+                            <TabItem Header="Minerals">
+                                <ContentControl Content="{Binding Minerals}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </TabItem>
+                            <TabItem Header="Cooking">
+                                <ContentControl Content="{Binding Cooking}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </TabItem>
+                            <TabItem Header="Fish">
+                                <ContentControl Content="{Binding Fish}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </TabItem>
+                            <TabItem Header="Artifacts">
+                                <ContentControl Content="{Binding Artifacts}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </TabItem>
+                        </TabControl>
+                    </TabItem>
+
+                    <TabItem Header="Powers">
+                        <ScrollViewer Margin="0,10,0,0" DataContext="{Binding Powers}" x:DataType="vm:PowersTabViewModel">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Covers what pre-1.6 saves called 'special items' (keys, guides, charms) plus Qi Walnut Room rewards (skill books, masteries). Book/Mastery rewards aren't editable yet - their real save format (a stats sub-dictionary) wasn't verifiable against any real example."
+                                           TextWrapping="Wrap" Opacity="0.7" Width="600"/>
+                                <ItemsControl ItemsSource="{Binding Powers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:PowerRowViewModel">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2">
+                                                <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsUnlocked}" IsEnabled="{Binding IsEditable}" Width="260"/>
+                                                <TextBlock Text="{Binding KindLabel}" Opacity="0.5" FontSize="11" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="Quests">
+                        <Grid ColumnDefinitions="Auto,*" Margin="0,10,0,0" DataContext="{Binding Quests}" x:DataType="vm:QuestsTabViewModel">
+                            <StackPanel Grid.Column="0" Spacing="6">
+                                <TextBlock Text="Complete a quest" FontWeight="Bold"/>
+                                <TextBlock Text="Every quest in the game, not just ones currently offered - completing one from here either updates it if it's already in your log, or adds it already completed if not."
+                                           TextWrapping="Wrap" Opacity="0.7" FontSize="11" Width="420"/>
+                                <ContentControl Content="{Binding Roster}" ContentTemplate="{StaticResource CollectionSectionTemplate}"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="10" Margin="16,0,0,0">
+                                <TextBlock Text="Active log" FontWeight="Bold"/>
+                                <TextBlock Text="Quests currently in your log - accept/complete or dismiss them individually."
+                                           TextWrapping="Wrap" Opacity="0.7" FontSize="11"/>
+                                <ScrollViewer>
+                                    <ItemsControl ItemsSource="{Binding Quests}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:QuestRowViewModel">
+                                                <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,8">
+                                                    <StackPanel Spacing="4">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
+                                                            <TextBlock Text="{Binding Id, StringFormat='(id {0})'}" Opacity="0.5" FontSize="11" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.7" FontSize="12" Width="500"/>
+                                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                                            <CheckBox Content="Accepted" IsChecked="{Binding Accepted}"/>
+                                                            <CheckBox Content="Completed" IsChecked="{Binding Completed}"/>
+                                                            <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
                     <TabItem Header="Relationships">
                         <Grid ColumnDefinitions="200,*" Margin="0,10,0,0" DataContext="{Binding Relationships}" x:DataType="vm:RelationshipsTabViewModel">
                             <ListBox Grid.Column="0" ItemsSource="{Binding NpcNames}" SelectedItem="{Binding SelectedNpcName}"/>
                             <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="10" IsEnabled="{Binding HasSelection}">
-                                <TextBlock Text="{Binding SelectedNpcName}" FontWeight="Bold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding SelectedNpcName}" FontWeight="Bold"/>
+                                    <TextBlock Text="(not yet met - editing will create their relationship)" Opacity="0.6" FontSize="11" VerticalAlignment="Center"
+                                               IsVisible="{Binding !IsMet}"/>
+                                    <TextBlock Text="(romanceable)" Opacity="0.6" FontSize="11" VerticalAlignment="Center" IsVisible="{Binding CanBeRomanced}"/>
+                                </StackPanel>
                                 <StackPanel Classes="field">
                                     <TextBlock Text="Points"/>
                                     <NumericUpDown Value="{Binding Points}" Minimum="0" Maximum="3000"/>
                                 </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Status"/>
+                                    <ComboBox ItemsSource="{Binding FriendshipStatuses}" SelectedItem="{Binding SelectedStatus}" Width="180"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Gifts this week"/>
+                                    <NumericUpDown Value="{Binding GiftsThisWeek}" Minimum="0" Maximum="2"/>
+                                </StackPanel>
+                                <StackPanel Classes="field">
+                                    <TextBlock Text="Gifts today"/>
+                                    <NumericUpDown Value="{Binding GiftsToday}" Minimum="0" Maximum="1"/>
+                                </StackPanel>
                                 <CheckBox Content="Talked to today" IsChecked="{Binding TalkedToToday}"/>
-                                <TextBlock Text="Only NPCs you've already met show up here - creating a brand new relationship from nothing isn't supported (see README)."
+                                <CheckBox Content="Proposal rejected" IsChecked="{Binding ProposalRejected}"/>
+                                <CheckBox Content="Roommate marriage" IsChecked="{Binding RoommateMarriage}" IsVisible="{Binding !CanBeRomanced}"/>
+                                <TextBlock Text="Every villager is listed, met or not - setting any field for someone you haven't met yet creates their relationship from zero."
                                            TextWrapping="Wrap" Opacity="0.7" Width="300"/>
                             </StackPanel>
                         </Grid>
                     </TabItem>
 
                     <TabItem Header="Storage">
-                        <Grid ColumnDefinitions="220,*" Margin="0,10,0,0" DataContext="{Binding Storage}" x:DataType="vm:StorageTabViewModel">
+                        <Grid ColumnDefinitions="220,*,240" Margin="0,10,0,0" DataContext="{Binding Storage}" x:DataType="vm:StorageTabViewModel">
                             <ListBox Grid.Column="0" ItemsSource="{Binding Chests}" SelectedItem="{Binding SelectedChest}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ChestRowViewModel">
@@ -178,23 +416,47 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <ItemsControl Grid.Column="1" Margin="16,0,0,0" ItemsSource="{Binding SelectedChestItems}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ItemRowViewModel">
-                                        <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <TextBlock Text="{Binding ItemType}" Width="90"/>
-                                                <TextBlock Text="{Binding Name}" Width="120"/>
-                                                <TextBlock Text="Stack" VerticalAlignment="Center"/>
-                                                <NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="110" FormatString="0"/>
-                                                <TextBlock Text="Quality" VerticalAlignment="Center"/>
-                                                <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsEnabled="{Binding HasQuality}"/>
-                                                <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+
+                            <DockPanel Grid.Column="1" Margin="16,0,0,0" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                <TextBlock DockPanel.Dock="Top" Text="Select a chest on the left." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNull}}"/>
+                                <TextBlock DockPanel.Dock="Top" Text="This chest is empty - add something from the right." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           IsVisible="{Binding ChestIsEmpty}"/>
+                                <ItemsControl ItemsSource="{Binding SelectedChestItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ItemRowViewModel">
+                                            <Border BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="0,4">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <TextBlock Text="{Binding ItemType}" Width="90"/>
+                                                    <TextBlock Text="{Binding Name}" Width="120"/>
+                                                    <TextBlock Text="Stack" VerticalAlignment="Center"/>
+                                                    <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="110" FormatString="0" IsEnabled="{Binding IsStackable}"/>
+                                                    <TextBlock Text="Quality" VerticalAlignment="Center" IsVisible="{Binding HasQuality}"/>
+                                                    <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsVisible="{Binding HasQuality}"/>
+                                                    <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </DockPanel>
+
+                            <StackPanel Grid.Column="2" Margin="16,0,0,0" Spacing="6" IsEnabled="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                <TextBlock Text="Add item to chest" FontWeight="Bold"/>
+                                <TextBox Text="{Binding ItemSearchText}" Watermark="Search items..."/>
+                                <ListBox ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedNewItem}" Height="400">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                       Width="20" Height="20" Stretch="Uniform"/>
+                                                <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
                                             </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <Button Content="Add" Command="{Binding AddItemCommand}" HorizontalAlignment="Stretch"/>
+                            </StackPanel>
                         </Grid>
                     </TabItem>
 
@@ -206,9 +468,9 @@
                             </StackPanel>
                             <StackPanel Classes="field">
                                 <TextBlock Text="Weather Tomorrow"/>
-                                <ComboBox ItemsSource="{Binding WeatherTypes}" SelectedItem="{Binding SelectedWeather}" Width="180"/>
+                                <TextBox Text="{Binding WeatherForTomorrow}" Width="180"/>
                             </StackPanel>
-                            <TextBlock Text="Weather names are best-effort, not verified against real save data (see README)."
+                            <TextBlock Text="A real weather condition id (confirmed: Sun, Rain, Wedding) - free text since the full real id list isn't confirmed, rather than restrict to a guessed dropdown."
                                        Opacity="0.7" TextWrapping="Wrap" Width="400"/>
                             <StackPanel Classes="field">
                                 <TextBlock Text="Daily Luck"/>
@@ -437,8 +699,8 @@
 
                                             <DataTemplate DataType="vm:PlacedObjectDetailsViewModel">
                                                 <StackPanel Spacing="6" DataContext="{Binding Item}">
-                                                    <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="0" Maximum="999" Width="180"/></StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180" IsEnabled="{Binding HasQuality}"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="180" IsEnabled="{Binding IsStackable}"/></StackPanel>
+                                                    <StackPanel Classes="field" IsVisible="{Binding HasQuality}"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180"/></StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
 

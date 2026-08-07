@@ -69,10 +69,15 @@ public sealed class BushEditor
         set => _element.SetChildInt("tileSheetOffset", value);
     }
 
+    /// <summary>Plain C# field on Bush, not a NetField (see class remarks) - genuinely absent
+    /// on some real bushes (confirmed via a real crash: a bush on an actively-played farm had
+    /// no &lt;health&gt; child at all), unlike the NetField-backed properties below. 0 is a
+    /// neutral fallback, not a confirmed real default - the game re-derives a real value at
+    /// runtime for bushes that were never explicitly damaged.</summary>
     public int Health
     {
-        get => _element.GetChildInt("health");
-        set => _element.SetChildInt("health", value);
+        get => _element.TryGetChildInt("health") ?? 0;
+        set => _element.SetChildIntCreateIfMissing("health", value);
     }
 
     public bool Flipped
@@ -91,11 +96,16 @@ public sealed class BushEditor
     }
 
     /// <summary>Whether this bush is sheltered (greenhouse/indoor pot) - forces spring-season
-    /// sprite selection year-round (Bush.IsSheltered()).</summary>
+    /// sprite selection year-round (Bush.IsSheltered()). Plain C# field on Bush, not a NetField
+    /// (see class remarks) - genuinely absent on ordinary outdoor bushes (confirmed via a real
+    /// crash rendering the Map tab on an actively-played farm: an outdoor bush had no
+    /// &lt;greenhouseBush&gt; child, only ever present on the "5 real examples" this class was
+    /// originally verified against, which all happened to be sheltered ones). Absent means not
+    /// sheltered, i.e. false.</summary>
     public bool GreenhouseBush
     {
-        get => _element.GetChildBool("greenhouseBush");
-        set => _element.SetChildBool("greenhouseBush", value);
+        get => _element.TryGetChildBool("greenhouseBush") ?? false;
+        set => _element.SetChildBoolCreateIfMissing("greenhouseBush", value);
     }
 
     public bool DrawShadow

@@ -110,6 +110,120 @@ public sealed class FarmMapEditor
     }
 
     /// <summary>
+    /// Places a new, empty, fully-functional Chest (or Stone/Junimo Chest - any BigCraftables.json
+    /// entry whose Name contains "Chest") - previously the generic AddObject path was the only
+    /// way to place one, which wrote a plain Object with no xsi:type="Chest" and none of Chest's
+    /// own fields (items container, lid frame, etc.) at all, so the game loaded it as an inert,
+    /// uninteractable, visually-glitched placeholder instead of a real chest (confirmed via
+    /// direct user report). Field shape - both the shared Object base and the Chest-specific
+    /// fields - copied from a real placed "Stone Chest" in an actual save; see
+    /// ObjectXmlBuilder/ChestXmlBuilder remarks.
+    /// </summary>
+    public PlacedObjectEditor AddChest(TilePosition position, int parentSheetIndex, string name, int price)
+    {
+        var container = _farmLocation.Element("objects");
+        if (container is null)
+        {
+            container = new XElement("objects");
+            _farmLocation.Add(container);
+        }
+
+        var (lidFrameCount, fridge, specialChestType) = ChestVariant(parentSheetIndex);
+        var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility: -300, category: -9, type: "Crafting", bigCraftable: true, stack: 1, position.X, position.Y)
+            .Concat(ChestXmlBuilder.Fields(parentSheetIndex, lidFrameCount, fridge, specialChestType));
+
+        var value = new XElement("Object", new XAttribute(XsiType, "Chest"), fields);
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new PlacedObjectEditor(position, value);
+    }
+
+    /// <summary>Mini-Fridge/Mini-Shipping Bin/Hopper are real Chest instances under the hood
+    /// (confirmed via decompiled Object.cs placement code: each calls `new Chest(...)`, not a
+    /// distinct class) that each override exactly one field from a plain Chest's defaults -
+    /// see ChestXmlBuilder remarks.</summary>
+    private static (int LidFrameCount, bool Fridge, string SpecialChestType) ChestVariant(int parentSheetIndex) => parentSheetIndex switch
+    {
+        216 => (2, true, "None"),               // Mini-Fridge
+        248 => (5, false, "MiniShippingBin"),    // Mini-Shipping Bin
+        275 => (2, false, "AutoLoader"),         // Hopper
+        _ => (5, false, "None"),                 // Chest / Stone Chest / Junimo Chest
+    };
+
+    /// <summary>Real Data/BigCraftables.json ids that are secretly a Chest under the hood -
+    /// Chest, Stone Chest, Junimo Chest, Mini-Fridge, Mini-Shipping Bin, Hopper. "Big Chest"/
+    /// "Big Stone Chest" use non-numeric ids ("BigChest"/"BigStoneChest") and aren't reachable
+    /// through the numeric-id placeable-item picker at all.</summary>
+    public static bool IsChestId(int parentSheetIndex) => parentSheetIndex is 130 or 232 or 256 or 216 or 248 or 275;
+
+    /// <summary>Places one of the Object subclasses that needs its own xsi:type and a handful of
+    /// extra fields, but isn't a Chest and isn't Auto-Grabber - Cask, Item Pedestal, Torch/Spirit
+    /// Torch, Signs, Garden Pot, Workbench, Mini-Jukebox, Wood Chipper, Telephone, Crab Pot,
+    /// Fences. See ExoticObjectCatalog for the per-item xsi:type/extra-fields/canBeGrabbed
+    /// lookup this pulls from.</summary>
+    public PlacedObjectEditor AddExoticObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type, bool bigCraftable)
+    {
+        var container = _farmLocation.Element("objects");
+        if (container is null)
+        {
+            container = new XElement("objects");
+            _farmLocation.Add(container);
+        }
+
+        var spec = ExoticObjectCatalog.Lookup(parentSheetIndex);
+        var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable, stack: 1, position.X, position.Y, includeQuestId: spec.IncludeQuestId, canBeGrabbed: spec.CanBeGrabbed)
+            .Concat(spec.ExtraFields(parentSheetIndex));
+
+        var value = new XElement("Object", new XAttribute(XsiType, spec.XsiTypeName), fields);
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new PlacedObjectEditor(position, value);
+    }
+
+    public static bool IsExoticObjectId(int parentSheetIndex) => ExoticObjectCatalog.IsKnown(parentSheetIndex);
+
+    public static bool IsAutoGrabberId(int parentSheetIndex) => parentSheetIndex == 165;
+
+    /// <summary>Auto-Grabber (165) stays a plain Object (no xsi:type override) but is
+    /// non-functional without a `heldObject` Chest attached - confirmed via decompiled Object.cs
+    /// placement code (`autoGrabber.heldObject.Value = new Chest()`, the parameterless ctor,
+    /// which leaves the nested chest at Chest's own field-initializer defaults: startingLidFrame
+    /// 501, lidFrameCount 5, not playerChest/bigCraftable). Nested tileLocation/boundingBox are
+    /// zeroed, matching how the real game represents a non-placed nested Object value (confirmed
+    /// via the real Item Pedestal "requiredItem" nested-Object example).</summary>
+    public PlacedObjectEditor AddAutoGrabber(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type)
+    {
+        var container = _farmLocation.Element("objects");
+        if (container is null)
+        {
+            container = new XElement("objects");
+            _farmLocation.Add(container);
+        }
+
+        var nestedChestFields = ObjectXmlBuilder.Fields("Chest", 130, price: 0, edibility: -300, category: -9, type: "interactive", bigCraftable: false, stack: 1, tileX: 0, tileY: 0, canBeSetDown: false)
+            .Concat(ChestXmlBuilder.Fields(500, playerChest: false));
+        var heldObject = new XElement("heldObject", new XAttribute(XsiType, "Chest"), nestedChestFields);
+
+        var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable: true, stack: 1, position.X, position.Y, heldObject: heldObject);
+        var value = new XElement("Object", fields);
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new PlacedObjectEditor(position, value);
+    }
+
+    /// <summary>
     /// Plants a tree at the given tile - field shape and order copied verbatim from a real
     /// adult tree in an actual save (growthStage 5, health 10, a leading empty &lt;texture /&gt;
     /// element before growthStage), wrapped as &lt;TerrainFeature xsi:type="Tree"&gt; matching

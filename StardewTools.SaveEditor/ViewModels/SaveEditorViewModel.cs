@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using StardewTools.Core.Models;
 
@@ -21,27 +24,59 @@ public partial class SaveEditorViewModel : ViewModelBase
     public InventoryTabViewModel Inventory { get; } = new();
     public StatsTabViewModel Stats { get; } = new();
     public AchievementsTabViewModel Achievements { get; } = new();
+    public QuestsTabViewModel Quests { get; } = new();
+    public RecipesTabViewModel Recipes { get; } = new();
+    public PowersTabViewModel Powers { get; } = new();
+    public CollectionsTabViewModel Collections { get; } = new();
     public RelationshipsTabViewModel Relationships { get; } = new();
     public StorageTabViewModel Storage { get; } = new();
     public FarmTabViewModel Farm { get; } = new();
     public MapTabViewModel Map { get; } = new();
 
+    /// <summary>
+    /// Binds every tab independently, catching per-tab so one tab's unexpected field shape
+    /// (real save data keeps turning up variations this tool hasn't seen before - see
+    /// StatsEditor/FarmEditor remarks for two found this way) can't block the whole save from
+    /// opening. A tab that failed to bind just shows whatever it had before (usually empty) and
+    /// gets named in the status message - everything else still works normally.
+    /// </summary>
     public void Load(string path)
     {
         _save = SaveGameEditor.Load(path);
         _filePath = path;
 
-        Player.Bind(_save);
-        Inventory.Bind(_save);
-        Stats.Bind(_save);
-        Achievements.Bind(_save);
-        Relationships.Bind(_save);
-        Storage.Bind(_save);
-        Farm.Bind(_save);
-        Map.Bind(_save);
+        var failedTabs = new List<string>();
+
+        void TryBind(string name, Action bind)
+        {
+            try
+            {
+                bind();
+            }
+            catch (Exception ex)
+            {
+                failedTabs.Add(name);
+                System.Diagnostics.Debug.WriteLine($"{name} tab failed to bind: {ex}");
+            }
+        }
+
+        TryBind("Player", () => Player.Bind(_save));
+        TryBind("Inventory", () => Inventory.Bind(_save));
+        TryBind("Stats", () => Stats.Bind(_save));
+        TryBind("Achievements", () => Achievements.Bind(_save));
+        TryBind("Quests", () => Quests.Bind(_save));
+        TryBind("Recipes", () => Recipes.Bind(_save));
+        TryBind("Powers", () => Powers.Bind(_save));
+        TryBind("Collections", () => Collections.Bind(_save));
+        TryBind("Relationships", () => Relationships.Bind(_save));
+        TryBind("Storage", () => Storage.Bind(_save));
+        TryBind("Farm", () => Farm.Bind(_save));
+        TryBind("Map", () => Map.Bind(_save));
 
         IsSaveLoaded = true;
-        StatusMessage = $"Loaded {Path.GetFileName(path)}";
+        StatusMessage = failedTabs.Count == 0
+            ? $"Loaded {Path.GetFileName(path)}"
+            : $"Loaded {Path.GetFileName(path)} - but these tabs hit an unexpected field shape and didn't load: {string.Join(", ", failedTabs)}. Everything else is fine to use.";
 
         var settings = AppSettings.Load();
         settings.LastSaveFilePath = path;

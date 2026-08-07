@@ -40,6 +40,13 @@ public partial class ItemRowViewModel : ViewModelBase
 
     public IReadOnlyList<NamedValue> Qualities => GameEnums.ItemQualities;
 
+    /// <summary>Whether Stack is even meaningful to edit - see ItemEditor.MaximumStackSize.
+    /// Tools/rings/hats/furniture/etc. always cap at 1 in the real game (confirmed against every
+    /// maximumStackSize() override in the decompiled source); only plain objects/BigCraftables
+    /// can hold more than one per slot.</summary>
+    public bool IsStackable => Item.IsStackable;
+    public int MaximumStackSize => Item.MaximumStackSize;
+
     [ObservableProperty] private int _stack;
     [ObservableProperty] private NamedValue _selectedQuality;
 

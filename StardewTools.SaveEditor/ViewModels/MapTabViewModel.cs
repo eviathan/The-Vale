@@ -506,7 +506,21 @@ public partial class MapTabViewModel : ViewModelBase
         }
 
         PlacementBlockedMessage = null;
-        var placed = _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
+        // Chest-family (Chest/Stone/Junimo/Mini-Fridge/Mini-Shipping Bin/Hopper), Auto-Grabber,
+        // and a further ~13 Object subclasses (Cask, Item Pedestal, Torch, Signs, Garden Pot,
+        // Workbench, Mini-Jukebox, Wood Chipper, Telephone, Crab Pot, Fences) all need their own
+        // real shape (an items container and xsi:type="Chest", a heldObject Chest, or their own
+        // xsi:type + extra fields respectively) - the generic path used to write all of these as
+        // an inert plain Object, which loaded in-game as uninteractable/non-functional rather
+        // than the real thing (confirmed via direct user report for Chest; see FarmMapEditor's
+        // AddChest/AddAutoGrabber/AddExoticObject remarks for the rest).
+        var placed = FarmMapEditor.IsChestId(item.Index)
+            ? _map.AddChest(tile, item.Index, item.Name, item.Price)
+            : FarmMapEditor.IsAutoGrabberId(item.Index)
+                ? _map.AddAutoGrabber(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type)
+                : FarmMapEditor.IsExoticObjectId(item.Index)
+                    ? _map.AddExoticObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable)
+                    : _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
         var summary = MapEntitySummary.FromObject(placed);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);

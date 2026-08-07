@@ -134,6 +134,17 @@ public static class GameEnums
         new NamedValue(6, "Cobweb"),
     };
 
+    /// <summary>Confirmed against Farmer.cs (maxItems, default 12) - vanilla only ever sets this
+    /// via increaseBackpackSize (12 starting, +12 for the Backpack, +12 again for the Deluxe
+    /// Backpack = 36 max). The field itself is a plain int, not a real enum, so this is a picker
+    /// convenience, not an enforced limit - PlayerEditor.MaxItems accepts any value.</summary>
+    public static readonly IReadOnlyList<NamedValue> BackpackSizes = new[]
+    {
+        new NamedValue(12, "Starting (12)"),
+        new NamedValue(24, "Backpack (24)"),
+        new NamedValue(36, "Deluxe Backpack (36)"),
+    };
+
     /// <summary>Confirmed against the decompiled Bush.cs constants (smallBush=0, mediumBush=1,
     /// largeBush=2, greenTeaBush=3, walnutBush=4).</summary>
     public static readonly IReadOnlyList<NamedValue> BushSizes = new[]
@@ -144,6 +155,10 @@ public static class GameEnums
         new NamedValue(3, "Tea"),
         new NamedValue(4, "Walnut"),
     };
+
+    /// <summary>Confirmed against the decompiled FriendshipStatus enum (Friendship.cs) - the
+    /// real values a &lt;Status&gt; element can hold.</summary>
+    public static readonly IReadOnlyList<string> FriendshipStatuses = new[] { "Friendly", "Dating", "Engaged", "Married", "Divorced" };
 
     public static string AchievementLabel(int id)
         => AchievementNames.TryGetValue(id, out var name) ? $"{id} - {name}" : $"{id} - Achievement #{id}";

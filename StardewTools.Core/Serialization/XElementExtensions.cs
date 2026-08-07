@@ -101,4 +101,17 @@ internal static class XElementExtensions
 
         child.Value = value ? "true" : "false";
     }
+
+    /// <summary>See SetChildBoolCreateIfMissing remarks - same rationale, for int fields.</summary>
+    public static void SetChildIntCreateIfMissing(this XElement parent, string childName, int value)
+    {
+        var child = parent.Element(childName);
+        if (child is null)
+        {
+            child = new XElement(childName);
+            parent.Add(child);
+        }
+
+        child.Value = value.ToString(CultureInfo.InvariantCulture);
+    }
 }

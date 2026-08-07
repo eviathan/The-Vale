@@ -20,10 +20,21 @@ public sealed class FarmEditor
         set => _root.SetChildInt("whichFarm", value);
     }
 
-    public int WeatherForTomorrow
+    /// <summary>Real field is `public static string Game1.weatherForTomorrow` - a weather
+    /// condition id ("Sun", "Rain", "Wedding", ...), not an int. An earlier version of this
+    /// property assumed int (confirmed only against one real save that happened to have a plain
+    /// numeric string here) - a more-progressed real save proved that wrong (a genuine
+    /// `<weatherForTomorrow>Rain</weatherForTomorrow>`, which crashed the old int.Parse-based
+    /// getter). Kept as a plain string rather than a curated dropdown since the full real id
+    /// list isn't confirmed - Data/Locations.json's own WeatherConditions lists came up empty
+    /// for every location checked, so "Sun"/"Rain"/"Wedding" (the only 3 ids actually seen
+    /// in real save data or literal string comparisons in the decompiled source) are the only
+    /// ones with real evidence; a free-text field never blocks a value this tool hasn't
+    /// enumerated, unlike a closed picker would.</summary>
+    public string WeatherForTomorrow
     {
-        get => _root.GetChildInt("weatherForTomorrow");
-        set => _root.SetChildInt("weatherForTomorrow", value);
+        get => _root.GetChildText("weatherForTomorrow");
+        set => _root.SetChildText("weatherForTomorrow", value);
     }
 
     public double DailyLuck
