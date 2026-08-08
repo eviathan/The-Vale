@@ -34,7 +34,12 @@ internal static class ObjectXmlBuilder
     /// constructor explicitly overrides to false (it's picked up by re-baiting/interacting, not
     /// by the normal grab action).
     /// </summary>
-    public static IEnumerable<XElement> Fields(string name, int parentSheetIndex, int price, int edibility, int category, string type, bool bigCraftable, int stack, int tileX, int tileY, bool includeQuestId = false, XElement? heldObject = null, bool canBeGrabbed = true, bool canBeSetDown = true)
+    /// <paramref name="itemId"/>: the real save identity (Item.ItemId) - defaults to
+    /// parentSheetIndex's own numeric string, true for every legacy item, but a real 1.6+ item
+    /// with a non-numeric key (e.g. "BigChest") needs its actual string id here instead; passing
+    /// the wrong one round-trips fine through this tool's own parser but wouldn't resolve to a
+    /// real item via the game's own ItemRegistry.
+    public static IEnumerable<XElement> Fields(string name, int parentSheetIndex, int price, int edibility, int category, string type, bool bigCraftable, int stack, int tileX, int tileY, bool includeQuestId = false, XElement? heldObject = null, bool canBeGrabbed = true, bool canBeSetDown = true, string? itemId = null)
     {
         var boundsX = tileX * 64;
         var boundsY = tileY * 64;
@@ -44,7 +49,7 @@ internal static class ObjectXmlBuilder
         yield return new XElement("hasBeenInInventory", false);
         yield return new XElement("name", name);
         yield return new XElement("parentSheetIndex", parentSheetIndex);
-        yield return new XElement("itemId", parentSheetIndex);
+        yield return new XElement("itemId", itemId ?? parentSheetIndex.ToString());
         yield return new XElement("specialItem", false);
         yield return new XElement("isRecipe", false);
         yield return new XElement("quality", 0);

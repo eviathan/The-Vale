@@ -74,12 +74,30 @@
         </DataTemplate>
     </Window.Resources>
 
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Ctrl+Z" Command="{Binding SaveEditor.UndoCommand}"/>
+        <KeyBinding Gesture="Ctrl+Y" Command="{Binding SaveEditor.RedoCommand}"/>
+        <KeyBinding Gesture="Ctrl+Shift+Z" Command="{Binding SaveEditor.RedoCommand}"/>
+    </Window.KeyBindings>
+
     <TabControl>
         <TabItem Header="Save File">
             <DockPanel Margin="16" DataContext="{Binding SaveEditor}" x:DataType="vm:SaveEditorViewModel">
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
                     <Button Content="Open Save..." Click="OnOpenClicked"/>
                     <Button Content="Save" Click="OnSaveClicked" IsEnabled="{Binding IsSaveLoaded}"/>
+                    <Button Command="{Binding UndoCommand}" ToolTip.Tip="Undo (Ctrl+Z)" Margin="16,0,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <controls:StardewIcon Kind="ArrowLeft" IconSize="12"/>
+                            <TextBlock Text="Undo"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding RedoCommand}" ToolTip.Tip="Redo (Ctrl+Y)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="Redo"/>
+                            <controls:StardewIcon Kind="ArrowRight" IconSize="12"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
                 <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusMessage}" Margin="0,12,0,0" Opacity="0.7"/>
@@ -516,7 +534,15 @@
                     </TabItem>
 
                     <TabItem Header="Map">
-                        <Grid ColumnDefinitions="*,260" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
+                        <Grid x:Name="MapTabRoot" ColumnDefinitions="*,260" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
+                            <Grid.KeyBindings>
+                                <KeyBinding Gesture="D1" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.Object}"/>
+                                <KeyBinding Gesture="D2" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.Building}"/>
+                                <KeyBinding Gesture="D3" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.Till}"/>
+                                <KeyBinding Gesture="D4" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.PlantCrop}"/>
+                                <KeyBinding Gesture="D5" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.PlantTree}"/>
+                                <KeyBinding Gesture="D6" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.PlantBush}"/>
+                            </Grid.KeyBindings>
                             <DockPanel Grid.Column="0">
                                 <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
                                 <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
@@ -551,11 +577,14 @@
                                     <ToggleButton Content="Plant Bush" IsChecked="{Binding IsPlantBushToolActive}" Margin="0,0,4,4"/>
                                     <TextBlock Text="{Binding BrushSize, StringFormat='Brush: {0}x{0} ([ / ] to resize)'}" VerticalAlignment="Center"
                                                Opacity="0.7" FontSize="11" Margin="8,0,0,4" IsVisible="{Binding IsAnyToolActive}"/>
+                                    <ComboBox ItemsSource="{Binding DrawShapeOptions}" SelectedItem="{Binding DrawShape}"
+                                              IsVisible="{Binding IsShapeDrawEligible}" Width="110" Margin="8,0,0,4"
+                                              ToolTip.Tip="Freehand paints every tile you drag over; Line/Rectangle preview the whole shape and commit it in one go on release."/>
                                 </WrapPanel>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
                                            Text="{Binding #FarmMap.Status}"/>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.5" FontSize="11" TextWrapping="Wrap"
-                                           Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select. [ / ] resizes the draw brush."/>
+                                           Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select. [ / ] resizes the draw brush. Ctrl+C/V/D copy, paste (at the last clicked tile), and duplicate the current selection. 1-6 switch tools, Delete removes the selection, arrow keys nudge it by one tile."/>
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding SelectedLocationName}"
@@ -564,7 +593,15 @@
                                                           SelectedRange="{Binding SelectedRange}"
                                                           IsPlacementToolActive="{Binding IsAnyToolActive}"
                                                           MoveRequest="{Binding MoveRequest}"
+                                                          CopyRequest="{Binding CopyRequest}"
+                                                          PasteRequest="{Binding PasteRequest}"
+                                                          DuplicateRequest="{Binding DuplicateRequest}"
+                                                          DeleteRequest="{Binding DeleteRequest}"
                                                           BrushSize="{Binding BrushSize}"
+                                                          DrawShape="{Binding DrawShape}"
+                                                          ShapeStrokeTiles="{Binding ShapeStrokeTiles}"
+                                                          BlockedEntities="{Binding BlockedEntities}"
+                                                          BlockedTiles="{Binding PlacementBlockedTiles}"
                                                           HoverFootprintWidth="{Binding HoverFootprintWidth}"
                                                           HoverFootprintHeight="{Binding HoverFootprintHeight}"
                                                           CurrentDaysPlayed="{Binding CurrentDaysPlayed}"
@@ -573,6 +610,32 @@
 
                             <ScrollViewer Grid.Column="1" Margin="16,0,0,0">
                                 <StackPanel Spacing="10">
+                                    <StackPanel Spacing="4" IsVisible="{Binding HasUnmodeledContentWarnings}">
+                                        <TextBlock Text="Not shown on this map" FontWeight="Bold" Foreground="Orange"/>
+                                        <ItemsControl ItemsSource="{Binding UnmodeledContentWarnings}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="11" Opacity="0.85" Margin="0,1"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Legend" FontWeight="Bold"/>
+                                        <ItemsControl ItemsSource="{Binding EntityLegend}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,1">
+                                                        <Rectangle Fill="{Binding ColorHex}" Width="10" Height="10" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding Count}" FontWeight="Bold" Width="28"/>
+                                                        <TextBlock Text="{Binding Label}" Opacity="0.85"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+
                                     <StackPanel Spacing="6" IsVisible="{Binding HasSelectedRange}">
                                         <TextBlock Text="{Binding SelectedRange.Count, StringFormat='Range selection ({0})'}" FontWeight="Bold"/>
                                         <TextBlock Text="Click and drag on the map to select an area." Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
@@ -580,13 +643,36 @@
                                         <TextBlock Text="Removes each entity and adds its real yield (wood, ore, harvested crop, ...) to your inventory where one exists."
                                                    Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
                                         <Button Content="{Binding SelectedRange.Count, StringFormat='Remove Selected ({0})'}" Command="{Binding RemoveRangeCommand}"/>
+                                        <Button Content="Copy (Ctrl+C)" Command="{Binding CopyCommand}"/>
+                                        <Button Content="Duplicate (Ctrl+D)" Command="{Binding DuplicateCommand}"/>
                                     </StackPanel>
+                                    <Button Content="Paste (Ctrl+V)" Command="{Binding PasteCommand}"/>
 
                                     <TextBlock Text="Tool properties" FontWeight="Bold" IsVisible="{Binding IsAnyToolActive}"/>
                                     <TextBlock Text="{Binding ClickedTile, StringFormat='Last click: {0}', TargetNullValue='Click the map to use the active tool'}"
                                                Opacity="0.7" TextWrapping="Wrap" IsVisible="{Binding IsAnyToolActive}"/>
 
                                     <StackPanel Spacing="6" IsVisible="{Binding IsObjectToolActive}">
+                                        <StackPanel Spacing="4" IsVisible="{Binding HasRecentPlaceableItems}">
+                                            <TextBlock Text="Recently used" Opacity="0.7" FontSize="11"/>
+                                            <ItemsControl ItemsSource="{Binding RecentPlaceableItems}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding #MapTabRoot.DataContext.SelectPlaceableItemCommand}"
+                                                                CommandParameter="{Binding}" Padding="4" Margin="0,0,4,4" ToolTip.Tip="{Binding}">
+                                                            <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                                   Width="20" Height="20" Stretch="Uniform"/>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                        <ComboBox ItemsSource="{Binding CategoryFilters}" SelectedItem="{Binding SelectedCategoryFilter}" HorizontalAlignment="Stretch"/>
                                         <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableItems}" SelectedItem="{Binding SelectedPlaceableItem}"
                                                           FilterMode="Contains" Watermark="Search items...">
                                             <AutoCompleteBox.ItemTemplate>
@@ -853,6 +939,11 @@
 
                                         </ContentControl.DataTemplates>
                                     </ContentControl>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                        <Button Content="Copy (Ctrl+C)" Command="{Binding CopyCommand}"/>
+                                        <Button Content="Duplicate (Ctrl+D)" Command="{Binding DuplicateCommand}"/>
+                                    </StackPanel>
 
                                     <Button Command="{Binding SelectedDetails.RemoveCommand}" IsVisible="{Binding Selected, Converter={x:Static conv:ObjectConverters.IsNotNull}}" HorizontalAlignment="Left">
                                         <StackPanel Orientation="Horizontal" Spacing="6">

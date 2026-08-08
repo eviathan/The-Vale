@@ -13,6 +13,14 @@ namespace StardewTools.SaveEditor.ViewModels;
 
 public enum PlacementTool { None, Object, Building, Till, PlantCrop, PlantTree, PlantBush }
 
+/// <summary>How a brush-stroke tool (Object/Till/Plant Crop/Plant Tree - not Building/Plant Bush,
+/// which always keep their own real footprint) turns a drag into a set of tiles to act on.
+/// Freehand (the original/default behavior) acts on every tile the cursor crosses, immediately,
+/// as it crosses it. Line/Rectangle instead show a live preview of the final shape and commit the
+/// whole thing in one batch only on release - see FarmMapControl's drag handling and
+/// MapTabViewModel.OnShapeStrokeTilesChanged.</summary>
+public enum DrawShape { Freehand, Line, Rectangle }
+
 /// <summary>A placement that's blocked by existing entities - Confirm removes them and places;
 /// Cancel just drops this. Blocking is captured up front (at click time), not re-derived at
 /// confirm time, so the confirmation panel's list can't drift from what Confirm will actually do.
@@ -30,6 +38,18 @@ public sealed record EntityMoveRequest(IReadOnlyList<(MapEntitySummary Entity, T
     public string DescribeLabel() => Moves.Count == 1
         ? $"Move {Moves[0].Entity.Label} to ({Moves[0].NewPosition.X}, {Moves[0].NewPosition.Y})"
         : $"Move {Moves.Count} entities";
+}
+
+/// <summary>One row of the Map tab's legend/count sidebar panel - see MapTabViewModel.EntityLegend.</summary>
+public sealed record EntityLegendEntry(MapEntityKind Kind, string Label, int Count, string ColorHex);
+
+/// <summary>One row of the Map tab's "unmodeled content" warnings panel - see
+/// MapTabViewModel.UnmodeledContentWarnings.</summary>
+public sealed record UnmodeledContentWarning(string Type, int Count, TilePosition SamplePosition)
+{
+    public string Message => Count == 1
+        ? $"1 tile of unmodeled terrain (type: {Type}) at ({SamplePosition.X}, {SamplePosition.Y})"
+        : $"{Count} tiles of unmodeled terrain (type: {Type}), e.g. near ({SamplePosition.X}, {SamplePosition.Y})";
 }
 
 public partial class MapTabViewModel : ViewModelBase
@@ -58,12 +78,19 @@ public partial class MapTabViewModel : ViewModelBase
     /// enforce the game's real placement rules without reaching into the View's internals.</summary>
     private TmxMap? _tmxMap;
 
-    [ObservableProperty] private MapEntitySummary? _selected;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CopyCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DuplicateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
+    private MapEntitySummary? _selected;
     [ObservableProperty] private MapEntityDetailsViewModel? _selectedDetails;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RemoveRangeCommand))]
     [NotifyCanExecuteChangedFor(nameof(CollectRangeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CopyCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DuplicateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
     [NotifyPropertyChangedFor(nameof(HasSelectedRange))]
     private IReadOnlyList<MapEntitySummary> _selectedRange = Array.Empty<MapEntitySummary>();
     [ObservableProperty] private string _season = "";
@@ -89,6 +116,7 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PasteCommand))]
     private TilePosition? _clickedTile;
 
     [ObservableProperty]
@@ -140,7 +168,38 @@ public partial class MapTabViewModel : ViewModelBase
     /// entity finishes - see OnMoveRequestChanged.</summary>
     [ObservableProperty] private EntityMoveRequest? _moveRequest;
 
-    [ObservableProperty] private PlacementTool _placementTool = PlacementTool.None;
+    /// <summary>Ctrl+C/Ctrl+V/Ctrl+D counters (OneWayToSource from FarmMapControl.OnKeyDown - see
+    /// its remarks on why these are incrementing counters, not bools) - each partial On*Changed
+    /// below just forwards to the same Copy/Paste/Duplicate logic the toolbar buttons use.</summary>
+    [ObservableProperty] private int _copyRequest;
+    [ObservableProperty] private int _pasteRequest;
+    [ObservableProperty] private int _duplicateRequest;
+    [ObservableProperty] private int _deleteRequest;
+
+    partial void OnCopyRequestChanged(int value) => Copy();
+    partial void OnPasteRequestChanged(int value) => Paste();
+    partial void OnDuplicateRequestChanged(int value) => Duplicate();
+    partial void OnDeleteRequestChanged(int value) => DeleteSelected();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsShapeDrawEligible))]
+    private PlacementTool _placementTool = PlacementTool.None;
+
+    /// <summary>Freehand/Line/Rectangle - only meaningful for the brush-stroke tools (Object/
+    /// Till/Plant Crop/Plant Tree, see IsShapeDrawEligible); Building/Plant Bush ignore this and
+    /// always use their own real footprint per click, same as before this existed.</summary>
+    [ObservableProperty] private DrawShape _drawShape = DrawShape.Freehand;
+
+    /// <summary>Whether the current tool supports Line/Rectangle draw shapes at all - drives
+    /// whether the shape toggle is shown/enabled in the toolbar.</summary>
+    public bool IsShapeDrawEligible => PlacementTool is PlacementTool.Object or PlacementTool.Till or PlacementTool.PlantCrop or PlacementTool.PlantTree;
+
+    public static IReadOnlyList<DrawShape> DrawShapeOptions { get; } = Enum.GetValues<DrawShape>();
+
+    /// <summary>Set by FarmMapControl (OneWayToSource) once a Line/Rectangle drag finishes (on
+    /// pointer release) - the whole computed shape's tiles, committed as one batch. Unlike
+    /// ClickedTile (which fires per tile crossed for Freehand), this fires once per stroke.</summary>
+    [ObservableProperty] private IReadOnlyList<TilePosition>? _shapeStrokeTiles;
 
     /// <summary>Bool proxies over PlacementTool so the toolbar's toggle buttons don't need an
     /// enum-to-bool converter - setting one turns the others off (mutually exclusive tools), and
@@ -216,7 +275,14 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConfirmPendingPlacementCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelPendingPlacementCommand))]
+    [NotifyPropertyChangedFor(nameof(BlockedEntities))]
     private PendingPlacement? _pendingPlacement;
+
+    /// <summary>The exact entities a pending placement/move is blocked by, bound straight into
+    /// FarmMapControl so it can highlight them on the map itself (not just name them in
+    /// PlacementBlockedMessage's text) - just PendingPlacement's own Blocking list, exposed as
+    /// its own property since that's what a StyledProperty binding needs to react to.</summary>
+    public IReadOnlyList<MapEntitySummary> BlockedEntities => PendingPlacement?.Blocking ?? Array.Empty<MapEntitySummary>();
 
     /// <summary>Set when a placement/move was rejected because the target tile(s) don't allow
     /// it per the game's own rules (water, no back tile, "NoFurniture", not "Buildable"/
@@ -224,9 +290,34 @@ public partial class MapTabViewModel : ViewModelBase
     /// cleared on the next successful placement/move attempt.</summary>
     [ObservableProperty] private string? _placementBlockedMessage;
 
+    /// <summary>The specific tile(s) CanPlaceFootprint rejected, alongside PlacementBlockedMessage
+    /// - unlike BlockedEntities (a PendingPlacement you could Confirm past), there's no entity to
+    /// blame here (water/unbuildable ground), so FarmMapControl highlights the raw tiles instead.
+    /// Always kept in sync with PlacementBlockedMessage: set together, cleared together.</summary>
+    [ObservableProperty] private IReadOnlyList<TilePosition> _placementBlockedTiles = Array.Empty<TilePosition>();
+
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
-    public IReadOnlyList<PlaceableItem> AvailablePlaceableItems => PlaceableItems.All;
+
+    public const string AllCategoriesFilter = "All";
+
+    /// <summary>"All" plus every real category group actually present in the loaded item data
+    /// (ObjectCategories.GroupFor), sorted - built once since PlaceableItems.All is itself a
+    /// lazy-loaded static list that never changes after first load.</summary>
+    public IReadOnlyList<string> CategoryFilters { get; } =
+        new[] { AllCategoriesFilter }.Concat(PlaceableItems.All.Select(ObjectCategories.GroupFor).Distinct().OrderBy(g => g, StringComparer.Ordinal)).ToList();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AvailablePlaceableItems))]
+    private string _selectedCategoryFilter = AllCategoriesFilter;
+
+    /// <summary>The AutoCompleteBox's own search box still searches within whatever this filters
+    /// down to - additive, doesn't change search behavior for anyone who leaves the filter on
+    /// "All".</summary>
+    public IReadOnlyList<PlaceableItem> AvailablePlaceableItems =>
+        SelectedCategoryFilter == AllCategoriesFilter
+            ? PlaceableItems.All
+            : PlaceableItems.All.Where(i => ObjectCategories.GroupFor(i) == SelectedCategoryFilter).ToList();
     public IReadOnlyList<PlaceableBuilding> AvailablePlaceableBuildings => PlaceableBuildings.All;
     public IReadOnlyList<PlaceableCrop> AvailablePlaceableCrops => PlaceableCrops.All;
     public IReadOnlyList<NamedValue> AvailableTreeTypes => GameEnums.TreeTypes;
@@ -245,6 +336,62 @@ public partial class MapTabViewModel : ViewModelBase
             : BundledContent.IsAvailable
                 ? BundledContent.FolderPath
                 : GameInstallLocator.FindExtractedContentFolder() ?? "";
+
+        Entities.CollectionChanged += (_, _) => RecomputeEntityLegend();
+        RecentPlaceableItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRecentPlaceableItems));
+
+        foreach (var recentRef in AppSettings.Load().RecentPlaceableItems)
+        {
+            var resolved = PlaceableItems.All.FirstOrDefault(i => i.RealItemId == recentRef.ItemId && i.IsBigCraftable == recentRef.IsBigCraftable);
+            if (resolved is not null)
+                RecentPlaceableItems.Add(resolved);
+        }
+    }
+
+    public const int MaxRecentPlaceableItems = 10;
+
+    /// <summary>Most-recently-placed picker items, newest first - loaded from AppSettings above
+    /// and pushed to on every successful PlaceObjectAt (see RecordRecentlyUsedItem). Persisted
+    /// immediately on every push (cheap, matches the existing AppSettings.Save() pattern already
+    /// used by OnContentFolderChanged) rather than batched, so a crash doesn't lose the list.</summary>
+    public ObservableCollection<PlaceableItem> RecentPlaceableItems { get; } = new();
+    public bool HasRecentPlaceableItems => RecentPlaceableItems.Count > 0;
+
+    /// <summary>Quick-pick row (see MainWindow.axaml) - just selects the item, same as picking
+    /// it from the AutoCompleteBox.</summary>
+    [RelayCommand]
+    private void SelectPlaceableItem(PlaceableItem item) => SelectedPlaceableItem = item;
+
+    private void RecordRecentlyUsedItem(PlaceableItem item)
+    {
+        var existing = RecentPlaceableItems.FirstOrDefault(i => i.RealItemId == item.RealItemId && i.IsBigCraftable == item.IsBigCraftable);
+        if (existing is not null)
+            RecentPlaceableItems.Remove(existing);
+        RecentPlaceableItems.Insert(0, item);
+        while (RecentPlaceableItems.Count > MaxRecentPlaceableItems)
+            RecentPlaceableItems.RemoveAt(RecentPlaceableItems.Count - 1);
+
+        var settings = AppSettings.Load();
+        settings.RecentPlaceableItems = RecentPlaceableItems
+            .Select(i => new RecentPlaceableItemRef { ItemId = i.RealItemId, IsBigCraftable = i.IsBigCraftable })
+            .ToList();
+        settings.Save();
+    }
+
+    /// <summary>Grouped counts by MapEntityKind for the sidebar legend panel - cheap enough to
+    /// fully recompute on every Entities change at farm-sized entity counts. ColorHex varies per
+    /// instance within a Kind (e.g. a Tree stump vs. a live tree), so the swatch shown is just
+    /// the first instance's real color in that group, not a synthesized one.</summary>
+    public IReadOnlyList<EntityLegendEntry> EntityLegend { get; private set; } = Array.Empty<EntityLegendEntry>();
+
+    private void RecomputeEntityLegend()
+    {
+        EntityLegend = Entities
+            .GroupBy(e => e.Kind)
+            .Select(g => new EntityLegendEntry(g.Key, g.Key.ToString(), g.Count(), g.First().ColorHex))
+            .OrderByDescending(e => e.Count)
+            .ToList();
+        OnPropertyChanged(nameof(EntityLegend));
     }
 
     partial void OnContentFolderChanged(string value)
@@ -442,6 +589,159 @@ public partial class MapTabViewModel : ViewModelBase
         SelectedRange = Array.Empty<MapEntitySummary>();
     }
 
+    /// <summary>Clipboard for Copy/Paste/Duplicate - each entry's Source is the ORIGINAL live
+    /// entity (not a detached clone); FarmMapEditor.CloneEntityAt deep-clones its underlying XML
+    /// node fresh at paste time (new XElement(source) copies values regardless of whether the
+    /// source is still attached to the live document), so this stays correct even if the original
+    /// is later moved. OffsetX/Y are relative to the copied selection's own top-left tile, so
+    /// Paste can re-anchor the whole set at any target tile.</summary>
+    private List<(MapEntitySummary Entity, int OffsetX, int OffsetY)>? _clipboard;
+
+    private List<MapEntitySummary> CopyableSelection() =>
+        (SelectedRange.Count > 0 ? SelectedRange : Selected is { } s ? new[] { s } : Array.Empty<MapEntitySummary>()).ToList();
+
+    private bool CanCopy => SelectedRange.Count > 0 || Selected is not null;
+    private bool CanPaste => _clipboard is not null && _map is not null && ClickedTile is not null;
+
+    /// <summary>Delete key (see FarmMapControl.OnKeyDown) - removes the whole SelectedRange if a
+    /// marquee selection is active, otherwise just Selected, matching the existing Remove/Remove
+    /// Range buttons' own single/multi split.</summary>
+    [RelayCommand(CanExecute = nameof(CanCopy))]
+    private void DeleteSelected()
+    {
+        if (SelectedRange.Count > 0)
+        {
+            RemoveRange();
+            return;
+        }
+
+        if (Selected is { } entity)
+            RemoveEntity(entity);
+    }
+
+    /// <summary>1-6 tool-switching shortcuts (see MainWindow.axaml's Map tab KeyBindings) - just
+    /// forwards to the same PlacementTool property the toolbar's ToggleButtons already set.</summary>
+    [RelayCommand]
+    private void SetPlacementTool(PlacementTool tool) => PlacementTool = tool;
+
+    [RelayCommand(CanExecute = nameof(CanCopy))]
+    private void Copy()
+    {
+        var toCopy = CopyableSelection();
+        if (toCopy.Count == 0)
+            return;
+
+        var anchorX = toCopy.Min(e => e.Position.X);
+        var anchorY = toCopy.Min(e => e.Position.Y);
+        _clipboard = toCopy.Select(e => (Entity: e, OffsetX: e.Position.X - anchorX, OffsetY: e.Position.Y - anchorY)).ToList();
+        PasteCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanPaste))]
+    private void Paste()
+    {
+        if (ClickedTile is not { } target)
+            return;
+
+        PasteClipboardAt(target, "Paste");
+    }
+
+    /// <summary>Copy + Paste at a fixed +1/+1 offset from the selection's own top-left, in one
+    /// step - doesn't touch whatever's already in the clipboard from a separate Copy/Paste.</summary>
+    [RelayCommand(CanExecute = nameof(CanCopy))]
+    private void Duplicate()
+    {
+        var toCopy = CopyableSelection();
+        if (toCopy.Count == 0)
+            return;
+
+        var anchorX = toCopy.Min(e => e.Position.X);
+        var anchorY = toCopy.Min(e => e.Position.Y);
+        var entries = toCopy.Select(e => (Entity: e, OffsetX: e.Position.X - anchorX, OffsetY: e.Position.Y - anchorY)).ToList();
+        PasteEntriesAt(entries, new TilePosition(anchorX + 1, anchorY + 1), "Duplicate");
+    }
+
+    /// <summary>Re-anchors the clipboard's relative offsets at target, validates the whole pasted
+    /// footprint set the same way a fresh placement/move would (one combined PendingPlacement
+    /// covering every blocked tile, not one per pasted entity), then clones+inserts on confirm.</summary>
+    private void PasteClipboardAt(TilePosition target, string label)
+    {
+        if (_clipboard is null)
+            return;
+
+        PasteEntriesAt(_clipboard, target, label);
+    }
+
+    private void PasteEntriesAt(List<(MapEntitySummary Entity, int OffsetX, int OffsetY)> entries, TilePosition target, string label)
+    {
+        if (_map is null || entries.Count == 0)
+            return;
+
+        var placements = entries
+            .Select(e => (e.Entity, NewPosition: new TilePosition(target.X + e.OffsetX, target.Y + e.OffsetY)))
+            .ToList();
+
+        var invalid = placements.FirstOrDefault(p => !CanPlaceFootprint(p.NewPosition, p.Entity.Width, p.Entity.Height, isBuilding: p.Entity.Kind == MapEntityKind.Building));
+        if (invalid.Entity is not null)
+        {
+            PlacementBlockedMessage = $"Can't paste {invalid.Entity.Label} at ({invalid.NewPosition.X}, {invalid.NewPosition.Y}) - the game wouldn't allow it there.";
+            PlacementBlockedTiles = FootprintTiles(invalid.NewPosition, invalid.Entity.Width, invalid.Entity.Height);
+            return;
+        }
+
+        PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
+        // Exclude the copied/duplicated entities themselves from their own blocking check - same
+        // reasoning as OnMoveRequestChanged excluding the entities being moved: ConfirmPending
+        // Placement deletes everything in Blocking, and a Duplicate's default +1/+1 offset (or a
+        // Paste that happens to land back on the source) would otherwise treat the very thing
+        // being copied as an obstacle to its own copy, destroying the original on confirm.
+        var sources = entries.Select(e => e.Entity).ToHashSet();
+        var blocking = Entities
+            .Where(e => !sources.Contains(e))
+            .Where(e => placements.Any(p => Overlaps(e, p.NewPosition, p.Entity.Width, p.Entity.Height)))
+            .Distinct()
+            .ToList();
+
+        void Apply()
+        {
+            var pasted = new List<MapEntitySummary>();
+            foreach (var (entity, newPosition) in placements)
+            {
+                var clonedSource = _map.CloneEntityAt(entity.Source, newPosition);
+                var summary = ResummarizeSource(clonedSource);
+                Entities.Add(summary);
+                _farmEntitiesCache.Add(summary);
+                pasted.Add(summary);
+            }
+
+            // Same single/multi selection convention as a marquee drag (FarmMapControl) - one
+            // pasted entity selects it directly and clears SelectedRange, several select as a
+            // range with Selected null. Leaving a stale 1-item SelectedRange around (from a
+            // previous single-entity paste) would otherwise silently hijack the next unrelated
+            // Copy/Duplicate call, since CopyableSelection prefers SelectedRange over Selected.
+            if (pasted.Count == 1)
+            {
+                Selected = pasted[0];
+                SelectedRange = Array.Empty<MapEntitySummary>();
+            }
+            else
+            {
+                Selected = null;
+                SelectedRange = pasted;
+            }
+        }
+
+        if (blocking.Count == 0)
+        {
+            Apply();
+            return;
+        }
+
+        var confirmLabel = placements.Count == 1 ? $"{label} at ({placements[0].NewPosition.X}, {placements[0].NewPosition.Y})" : $"{label} {placements.Count} entities";
+        PendingPlacement = new PendingPlacement(confirmLabel, blocking, Apply);
+    }
+
     /// <summary>Walks every modeled entity kind off a FarmMapEditor - shared by Bind() (for the
     /// Farm) and OnSelectedLocationNameChanged (for a building interior or any other resolvable
     /// location), so both end up with an identical entity list built the same way.</summary>
@@ -491,7 +791,25 @@ public partial class MapTabViewModel : ViewModelBase
                 ? $"{_farmEntitiesCache.Count} placed entities in {value}."
                 : $"{_farmEntitiesCache.Count} placed entities in {value}. Also {unmodeled.Count} tile(s) of " +
                   $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
+            RecomputeUnmodeledContentWarnings(unmodeled);
         }
+    }
+
+    /// <summary>Detail behind Summary's one-line "N tile(s) of unmodeled terrain..." clause -
+    /// grouped per type with a real sample position (e.g. "3 tiles of unmodeled terrain (type:
+    /// X) near (12, 40)"), shown in its own small warnings panel (MainWindow.axaml) so a gap in
+    /// what this tool models is discoverable at a glance instead of buried in prose.</summary>
+    public IReadOnlyList<UnmodeledContentWarning> UnmodeledContentWarnings { get; private set; } = Array.Empty<UnmodeledContentWarning>();
+    public bool HasUnmodeledContentWarnings => UnmodeledContentWarnings.Count > 0;
+
+    private void RecomputeUnmodeledContentWarnings(IReadOnlyList<(TilePosition Position, string Type)> unmodeled)
+    {
+        UnmodeledContentWarnings = unmodeled
+            .GroupBy(u => u.Type)
+            .Select(g => new UnmodeledContentWarning(g.Key, g.Count(), g.First().Position))
+            .ToList();
+        OnPropertyChanged(nameof(UnmodeledContentWarnings));
+        OnPropertyChanged(nameof(HasUnmodeledContentWarnings));
     }
 
     partial void OnHouseUpgradeLevelChanged(int value)
@@ -574,6 +892,7 @@ public partial class MapTabViewModel : ViewModelBase
             ? $"{_farmEntitiesCache.Count} placed entities on the Farm."
             : $"{_farmEntitiesCache.Count} placed entities on the Farm. Also {unmodeled.Count} tile(s) of " +
               $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
+        RecomputeUnmodeledContentWarnings(unmodeled);
     }
 
     private bool CanPlaceObject() => _map is not null && SelectedPlaceableItem is not null && ClickedTile is not null && SelectedLocationName == _mapLocationName;
@@ -597,10 +916,12 @@ public partial class MapTabViewModel : ViewModelBase
         if (!CanPlaceFootprint(tile, 1, 1, isBuilding: false))
         {
             PlacementBlockedMessage = $"Can't place {item.Name} at ({tile.X}, {tile.Y}) - the game wouldn't allow an item there (water, no ground, or marked unplaceable).";
+            PlacementBlockedTiles = new[] { tile };
             return;
         }
 
         PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
 
         // Floor/path items (Wood Path, Cobblestone Path, ...) don't become a placed Object at
         // all in the real game - they add a Flooring to terrainFeatures instead (confirmed via
@@ -610,13 +931,14 @@ public partial class MapTabViewModel : ViewModelBase
         // MAP_AUDIT.md's Path/Flooring section). The generic Object path used to place these as
         // an inert static-sprite Object, which is why paths never joined and always blocked
         // further placement on the same tile.
-        if (FarmMapEditor.IsFloorPathItemId(item.Index))
+        if (FarmMapEditor.IsFloorPathItemId(item.Index, item.IsBigCraftable))
         {
             var flooring = _map.AddFlooring(tile, item.Index);
             var flooringSummary = MapEntitySummary.FromFlooring(flooring);
             _farmEntitiesCache.Add(flooringSummary);
             Entities.Add(flooringSummary);
             Selected = flooringSummary;
+            RecordRecentlyUsedItem(item);
             return;
         }
 
@@ -628,17 +950,18 @@ public partial class MapTabViewModel : ViewModelBase
         // an inert plain Object, which loaded in-game as uninteractable/non-functional rather
         // than the real thing (confirmed via direct user report for Chest; see FarmMapEditor's
         // AddChest/AddAutoGrabber/AddExoticObject remarks for the rest).
-        var placed = FarmMapEditor.IsChestId(item.Index)
-            ? _map.AddChest(tile, item.Index, item.Name, item.Price)
-            : FarmMapEditor.IsAutoGrabberId(item.Index)
+        var placed = FarmMapEditor.IsChestId(item.Index, item.IsBigCraftable)
+            ? _map.AddChest(tile, item.Index, item.Name, item.Price, item.ItemId)
+            : FarmMapEditor.IsAutoGrabberId(item.Index, item.IsBigCraftable)
                 ? _map.AddAutoGrabber(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type)
-                : FarmMapEditor.IsExoticObjectId(item.Index)
+                : FarmMapEditor.IsExoticObjectId(item.Index, item.IsBigCraftable)
                     ? _map.AddExoticObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable)
-                    : _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable);
+                    : _map.AddObject(tile, item.Index, item.Name, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable, item.ItemId);
         var summary = MapEntitySummary.FromObject(placed);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
         Selected = summary;
+        RecordRecentlyUsedItem(item);
     }
 
     private bool CanPlaceBuilding() => _map is not null && SelectedPlaceableBuilding is not null && ClickedTile is not null && SelectedLocationName == _mapLocationName;
@@ -661,10 +984,12 @@ public partial class MapTabViewModel : ViewModelBase
         if (!CanPlaceBuildingFootprint(tile, building))
         {
             PlacementBlockedMessage = $"Can't build {building.Name} at ({tile.X}, {tile.Y}) - part of its footprint (or one of its extra required tiles, e.g. a mailbox spot) isn't buildable ground.";
+            PlacementBlockedTiles = FootprintTiles(tile, building.TilesWide, building.TilesHigh);
             return;
         }
 
         PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
         var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical, building.HayCapacity);
         var summary = MapEntitySummary.FromBuilding(placed);
         _farmEntitiesCache.Add(summary);
@@ -763,44 +1088,20 @@ public partial class MapTabViewModel : ViewModelBase
         if (value is not { } tile || _map is null || SelectedLocationName != _mapLocationName)
             return;
 
+        if (ApplyBrushToolForCurrentTool(BrushTiles(tile)))
+            return;
+
         switch (PlacementTool)
         {
-            case PlacementTool.Object when SelectedPlaceableItem is { } item:
-                // A floor/path item placed on top of existing Flooring should still prompt
-                // (two terrain features can't share a tile - see FarmMapEditor.AddFlooring), but
-                // every other object should be placeable straight over existing Flooring without
-                // a confirmation - real Flooring is always passable and excluded from the game's
-                // default placement collision mask (GameLocation.CanItemBePlacedHere), which is
-                // exactly why real players can put chests/scarecrows/furniture on their paths.
-                ApplyBrushTool(tile, $"Place {item}", $"Can't place {item.Name} there - the game wouldn't allow an item there (water, no ground, or marked unplaceable).",
-                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false),
-                    ignoreBlocking: FarmMapEditor.IsFloorPathItemId(item.Index) ? null : e => e.Kind == MapEntityKind.Flooring,
-                    applyAt: t => PlaceObjectAt(t, item));
-                break;
             case PlacementTool.Building when SelectedPlaceableBuilding is { } building:
                 if (!CanPlaceBuildingFootprint(tile, building))
                 {
                     PlacementBlockedMessage = $"Can't build {building.Name} at ({tile.X}, {tile.Y}) - part of its footprint (or one of its extra required tiles, e.g. a mailbox spot) isn't buildable ground.";
+                    PlacementBlockedTiles = FootprintTiles(tile, building.TilesWide, building.TilesHigh);
                     break;
                 }
+                PlacementBlockedTiles = Array.Empty<TilePosition>();
                 TryPlaceOrConfirm(tile, building.TilesWide, building.TilesHigh, $"Place {building}", () => PlaceBuildingAt(tile, building));
-                break;
-            case PlacementTool.Till:
-                ApplyBrushTool(tile, "Till soil", "Can't till there - not diggable ground.",
-                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false)
-                        && !Entities.Any(e => e.Kind == MapEntityKind.HoeDirt && e.Position == t), // already tilled - nothing to do, skip silently rather than re-confirm
-                    ignoreBlocking: null, applyAt: TillAt);
-                break;
-            case PlacementTool.PlantCrop when SelectedPlaceableCrop is { } crop:
-                ApplyBrushTool(tile, $"Plant {crop.Name}", $"Can't plant {crop.Name} there - not diggable/plantable ground.",
-                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false),
-                    ignoreBlocking: e => e.Kind == MapEntityKind.HoeDirt && ((HoeDirtEditor)e.Source).Crop is null, // bare tilled soil is fine to plant straight into
-                    applyAt: t => PlantCropAt(t, crop));
-                break;
-            case PlacementTool.PlantTree:
-                ApplyBrushTool(tile, $"Plant {SelectedTreeType.Name} tree", "Can't plant a tree there - the game wouldn't allow one there.",
-                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null,
-                    applyAt: t => PlantTreeAt(t, SelectedTreeType.Value, PlantTreeGrowthStage));
                 break;
             case PlacementTool.PlantBush:
                 // A bush's footprint varies by size (1-3 tiles wide - MapEntitySummary.FootprintWidth),
@@ -811,8 +1112,10 @@ public partial class MapTabViewModel : ViewModelBase
                 if (!CanPlaceFootprint(tile, bushWidth, 1, isBuilding: false))
                 {
                     PlacementBlockedMessage = $"Can't plant a bush at ({tile.X}, {tile.Y}) - the game wouldn't allow one there.";
+                    PlacementBlockedTiles = FootprintTiles(tile, bushWidth, 1);
                     break;
                 }
+                PlacementBlockedTiles = Array.Empty<TilePosition>();
                 // Bush is a LargeTerrainFeature, a real, separate collision category from
                 // Flooring (same "always passable, doesn't block real object placement" rule as
                 // the Object tool above) - see FarmMapEditor.AddFlooring's remarks.
@@ -823,7 +1126,10 @@ public partial class MapTabViewModel : ViewModelBase
     }
 
     /// <summary>Every tile in a BrushSize x BrushSize square centered on (as close as an even
-    /// size allows) the given tile - size 1 is just the tile itself.</summary>
+    /// size allows) the given tile - size 1 is just the tile itself. This is Freehand draw
+    /// shape's own tile source (one call per tile crossed during a drag) - Line/Rectangle supply
+    /// their own computed tile list directly instead (see FarmMapControl's shape-drag handling
+    /// and OnShapeStrokeTilesChanged).</summary>
     private IEnumerable<TilePosition> BrushTiles(TilePosition center)
     {
         var startX = center.X - (BrushSize - 1) / 2;
@@ -833,24 +1139,82 @@ public partial class MapTabViewModel : ViewModelBase
                 yield return new TilePosition(startX + dx, startY + dy);
     }
 
+    /// <summary>The brush-stroke tools' (Object/Till/Plant Crop/Plant Tree) dispatch, shared by
+    /// OnClickedTileChanged (Freehand - one call per tile crossed, candidateTiles is that single
+    /// tile's BrushTiles square) and OnShapeStrokeTilesChanged (Line/Rectangle - one call per
+    /// whole stroke, candidateTiles is the already-computed shape). Returns false for any other
+    /// tool (Building/Plant Bush/None) so OnClickedTileChanged can fall through to their own
+    /// single-anchor-tile handling - those two don't have a brush-stroke concept at all.</summary>
+    private bool ApplyBrushToolForCurrentTool(IEnumerable<TilePosition> candidateTiles)
+    {
+        switch (PlacementTool)
+        {
+            case PlacementTool.Object when SelectedPlaceableItem is { } item:
+                // A floor/path item placed on top of existing Flooring should still prompt
+                // (two terrain features can't share a tile - see FarmMapEditor.AddFlooring), but
+                // every other object should be placeable straight over existing Flooring without
+                // a confirmation - real Flooring is always passable and excluded from the game's
+                // default placement collision mask (GameLocation.CanItemBePlacedHere), which is
+                // exactly why real players can put chests/scarecrows/furniture on their paths.
+                ApplyBrushTool(candidateTiles, $"Place {item}", $"Can't place {item.Name} there - the game wouldn't allow an item there (water, no ground, or marked unplaceable).",
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false),
+                    ignoreBlocking: FarmMapEditor.IsFloorPathItemId(item.Index, item.IsBigCraftable) ? null : e => e.Kind == MapEntityKind.Flooring,
+                    applyAt: t => PlaceObjectAt(t, item));
+                return true;
+            case PlacementTool.Till:
+                ApplyBrushTool(candidateTiles, "Till soil", "Can't till there - not diggable ground.",
+                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false)
+                        && !Entities.Any(e => e.Kind == MapEntityKind.HoeDirt && e.Position == t), // already tilled - nothing to do, skip silently rather than re-confirm
+                    ignoreBlocking: null, applyAt: TillAt);
+                return true;
+            case PlacementTool.PlantCrop when SelectedPlaceableCrop is { } crop:
+                ApplyBrushTool(candidateTiles, $"Plant {crop.Name}", $"Can't plant {crop.Name} there - not diggable/plantable ground.",
+                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false),
+                    ignoreBlocking: e => e.Kind == MapEntityKind.HoeDirt && ((HoeDirtEditor)e.Source).Crop is null, // bare tilled soil is fine to plant straight into
+                    applyAt: t => PlantCropAt(t, crop));
+                return true;
+            case PlacementTool.PlantTree:
+                ApplyBrushTool(candidateTiles, $"Plant {SelectedTreeType.Name} tree", "Can't plant a tree there - the game wouldn't allow one there.",
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null,
+                    applyAt: t => PlantTreeAt(t, SelectedTreeType.Value, PlantTreeGrowthStage));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Line/Rectangle draw shapes commit their whole computed stroke in one batch, only
+    /// on pointer release (set by FarmMapControl) - unlike Freehand/ClickedTile, which fires once
+    /// per tile crossed during the drag.</summary>
+    partial void OnShapeStrokeTilesChanged(IReadOnlyList<TilePosition>? value)
+    {
+        if (value is not { Count: > 0 } tiles || _map is null || SelectedLocationName != _mapLocationName)
+            return;
+
+        ApplyBrushToolForCurrentTool(tiles);
+    }
+
     /// <summary>Shared "brush stroke" flow for the single-tile draw tools. Tiles that fail
     /// isValidTile are silently skipped - a stroke that clips water/an edge/already-tilled soil
-    /// just doesn't act there, like a real brush - but if none of the brush's tiles are valid,
+    /// just doesn't act there, like a real brush - but if none of the candidate tiles are valid,
     /// PlacementBlockedMessage explains why. Blocking entities across every still-valid tile are
     /// batched into one PendingPlacement/confirmation, same as everywhere else on this map;
     /// ignoreBlocking lets a tool treat some entity kinds (bare tilled soil, for Till/PlantCrop)
     /// as fine to build into directly rather than something to clear first.</summary>
-    private void ApplyBrushTool(TilePosition center, string label, string invalidMessage,
+    private void ApplyBrushTool(IEnumerable<TilePosition> candidateTiles, string label, string invalidMessage,
         Func<TilePosition, bool> isValidTile, Func<MapEntitySummary, bool>? ignoreBlocking, Action<TilePosition> applyAt)
     {
-        var tiles = BrushTiles(center).Where(isValidTile).ToList();
+        var allCandidates = candidateTiles as IReadOnlyCollection<TilePosition> ?? candidateTiles.ToList();
+        var tiles = allCandidates.Where(isValidTile).ToList();
         if (tiles.Count == 0)
         {
             PlacementBlockedMessage = invalidMessage;
+            PlacementBlockedTiles = allCandidates.ToList();
             return;
         }
 
         PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
         var blocking = Entities
             .Where(e => tiles.Any(t => Overlaps(e, t, 1, 1)))
             .Where(e => ignoreBlocking is null || !ignoreBlocking(e))
@@ -890,10 +1254,12 @@ public partial class MapTabViewModel : ViewModelBase
         if (invalidMove.Entity is not null)
         {
             PlacementBlockedMessage = $"Can't move {invalidMove.Entity.Label} to ({invalidMove.NewPosition.X}, {invalidMove.NewPosition.Y}) - the game wouldn't allow it there.";
+            PlacementBlockedTiles = FootprintTiles(invalidMove.NewPosition, invalidMove.Entity.Width, invalidMove.Entity.Height);
             return;
         }
 
         PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
         var moving = request.Moves.Select(m => m.Entity).ToHashSet();
         // Existing Flooring only actually blocks a move that's itself a terrain feature (moving
         // onto the same terrainFeatures dictionary slot) - a moved Object/Building/Bush should
@@ -990,6 +1356,18 @@ public partial class MapTabViewModel : ViewModelBase
     private static bool Overlaps(MapEntitySummary entity, TilePosition tile, int width, int height)
         => entity.Position.X + entity.Width - 1 >= tile.X && entity.Position.X <= tile.X + width - 1
         && entity.Position.Y + entity.Height - 1 >= tile.Y && entity.Position.Y <= tile.Y + height - 1;
+
+    /// <summary>Every tile in a width x height rectangle whose top-left is at origin - used to
+    /// populate PlacementBlockedTiles with a whole rejected footprint (a building, a bush), not
+    /// just its anchor tile.</summary>
+    private static List<TilePosition> FootprintTiles(TilePosition origin, int width, int height)
+    {
+        var tiles = new List<TilePosition>();
+        for (var dx = 0; dx < width; dx++)
+            for (var dy = 0; dy < height; dy++)
+                tiles.Add(new TilePosition(origin.X + dx, origin.Y + dy));
+        return tiles;
+    }
 
     private bool HasPendingPlacement => PendingPlacement is not null;
 

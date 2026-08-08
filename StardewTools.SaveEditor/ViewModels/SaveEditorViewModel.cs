@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
 
 namespace StardewTools.SaveEditor.ViewModels;
@@ -16,9 +17,22 @@ public partial class SaveEditorViewModel : ViewModelBase
 {
     private SaveGameEditor? _save;
     private string? _filePath;
+    private readonly UndoManager _undo;
 
     [ObservableProperty] private string _statusMessage = "Open a Stardew Valley save file to begin.";
     [ObservableProperty] private bool _isSaveLoaded;
+    [ObservableProperty] private bool _canUndo;
+    [ObservableProperty] private bool _canRedo;
+
+    public SaveEditorViewModel()
+    {
+        _undo = new UndoManager(OnUndoRedoRestore);
+        _undo.StackChanged += () =>
+        {
+            CanUndo = _undo.CanUndo;
+            CanRedo = _undo.CanRedo;
+        };
+    }
 
     public PlayerTabViewModel Player { get; } = new();
     public InventoryTabViewModel Inventory { get; } = new();
@@ -45,6 +59,25 @@ public partial class SaveEditorViewModel : ViewModelBase
         _save = SaveGameEditor.Load(path);
         _filePath = path;
 
+        var failedTabs = BindAll(_save);
+        _undo.Attach(_save);
+
+        IsSaveLoaded = true;
+        StatusMessage = failedTabs.Count == 0
+            ? $"Loaded {Path.GetFileName(path)}"
+            : $"Loaded {Path.GetFileName(path)} - but these tabs hit an unexpected field shape and didn't load: {string.Join(", ", failedTabs)}. Everything else is fine to use.";
+
+        var settings = AppSettings.Load();
+        settings.LastSaveFilePath = path;
+        settings.Save();
+    }
+
+    /// <summary>Binds every tab independently, catching per-tab so one tab's unexpected field
+    /// shape can't block the whole save from opening (see class remarks) - shared by the initial
+    /// Load() and by undo/redo's restore step (OnUndoRedoRestore), both of which need every tab
+    /// re-pointed at a new SaveGameEditor instance. Returns the names of any tabs that failed.</summary>
+    private List<string> BindAll(SaveGameEditor save)
+    {
         var failedTabs = new List<string>();
 
         void TryBind(string name, Action bind)
@@ -60,28 +93,44 @@ public partial class SaveEditorViewModel : ViewModelBase
             }
         }
 
-        TryBind("Player", () => Player.Bind(_save));
-        TryBind("Inventory", () => Inventory.Bind(_save));
-        TryBind("Stats", () => Stats.Bind(_save));
-        TryBind("Achievements", () => Achievements.Bind(_save));
-        TryBind("Quests", () => Quests.Bind(_save));
-        TryBind("Recipes", () => Recipes.Bind(_save));
-        TryBind("Powers", () => Powers.Bind(_save));
-        TryBind("Collections", () => Collections.Bind(_save));
-        TryBind("Relationships", () => Relationships.Bind(_save));
-        TryBind("Storage", () => Storage.Bind(_save));
-        TryBind("Farm", () => Farm.Bind(_save));
-        TryBind("Map", () => Map.Bind(_save));
+        TryBind("Player", () => Player.Bind(save));
+        TryBind("Inventory", () => Inventory.Bind(save));
+        TryBind("Stats", () => Stats.Bind(save));
+        TryBind("Achievements", () => Achievements.Bind(save));
+        TryBind("Quests", () => Quests.Bind(save));
+        TryBind("Recipes", () => Recipes.Bind(save));
+        TryBind("Powers", () => Powers.Bind(save));
+        TryBind("Collections", () => Collections.Bind(save));
+        TryBind("Relationships", () => Relationships.Bind(save));
+        TryBind("Storage", () => Storage.Bind(save));
+        TryBind("Farm", () => Farm.Bind(save));
+        TryBind("Map", () => Map.Bind(save));
 
-        IsSaveLoaded = true;
-        StatusMessage = failedTabs.Count == 0
-            ? $"Loaded {Path.GetFileName(path)}"
-            : $"Loaded {Path.GetFileName(path)} - but these tabs hit an unexpected field shape and didn't load: {string.Join(", ", failedTabs)}. Everything else is fine to use.";
-
-        var settings = AppSettings.Load();
-        settings.LastSaveFilePath = path;
-        settings.Save();
+        return failedTabs;
     }
+
+    /// <summary>UndoManager's restore callback - swaps in the restored SaveGameEditor and rebinds
+    /// every tab against it, exactly like a fresh Load() (see BindAll remarks). Each tab's Bind()
+    /// already resets its own transient selection state, so stale references to XElements from
+    /// before the undo/redo (which no longer exist in the restored tree) are naturally discarded
+    /// without any undo-specific cleanup code.</summary>
+    private void OnUndoRedoRestore(SaveGameEditor restored)
+    {
+        _save = restored;
+        var failedTabs = BindAll(restored);
+        StatusMessage = failedTabs.Count == 0
+            ? StatusMessage
+            : $"Undo/redo hit an unexpected field shape on: {string.Join(", ", failedTabs)}.";
+    }
+
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private void Undo() => _undo.Undo();
+
+    [RelayCommand(CanExecute = nameof(CanRedo))]
+    private void Redo() => _undo.Redo();
+
+    partial void OnCanUndoChanged(bool value) => UndoCommand.NotifyCanExecuteChanged();
+    partial void OnCanRedoChanged(bool value) => RedoCommand.NotifyCanExecuteChanged();
 
     public void Save()
     {

@@ -62,6 +62,26 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<EntityMoveRequest?> MoveRequestProperty =
         AvaloniaProperty.Register<FarmMapControl, EntityMoveRequest?>(nameof(MoveRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
 
+    /// <summary>Ctrl+C/Ctrl+V/Ctrl+D (see OnKeyDown) - each fires by incrementing a counter
+    /// (rather than toggling a bool or re-sending the same value) so the ViewModel's partial
+    /// On*Changed always sees a genuinely new value and fires every press, even for two presses
+    /// in a row - a plain bool/reused-reference property would silently no-op on a repeat
+    /// (CommunityToolkit [ObservableProperty]'s default equality-check skip, the same gotcha this
+    /// session already hit once with ClickedTile in the render-harness tests).</summary>
+    public static readonly StyledProperty<int> CopyRequestProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(CopyRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    public static readonly StyledProperty<int> PasteRequestProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(PasteRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    public static readonly StyledProperty<int> DuplicateRequestProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(DuplicateRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    /// <summary>Delete key (see OnKeyDown) - same incrementing-counter reasoning as CopyRequest/
+    /// PasteRequest/DuplicateRequest above.</summary>
+    public static readonly StyledProperty<int> DeleteRequestProperty =
+        AvaloniaProperty.Register<FarmMapControl, int>(nameof(DeleteRequest), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
     /// <summary>Whether a draw tool (Object/Building) is armed in the side panel. When true, a
     /// click-and-drag paints one placement per tile crossed instead of the normal marquee
     /// range-select - see OnPointerMoved.</summary>
@@ -86,6 +106,29 @@ public sealed class FarmMapControl : Control
     /// ViewModel, which is what actually stamps with it.</summary>
     public static readonly StyledProperty<int> BrushSizeProperty =
         AvaloniaProperty.Register<FarmMapControl, int>(nameof(BrushSize), 1, defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+
+    /// <summary>Freehand/Line/Rectangle - see OnPointerPressed/Moved/Released and DrawShapePreview.
+    /// TwoWay so a future keyboard shortcut could cycle it the same way BrushSize's [ / ] does,
+    /// though today it's only ever set from the toolbar toggle.</summary>
+    public static readonly StyledProperty<DrawShape> DrawShapeProperty =
+        AvaloniaProperty.Register<FarmMapControl, DrawShape>(nameof(DrawShape), DrawShape.Freehand, defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+
+    /// <summary>Fired once, on pointer release, with the whole computed Line/Rectangle shape's
+    /// tiles - see MapTabViewModel.OnShapeStrokeTilesChanged. Freehand never sets this; it keeps
+    /// using ClickedTile (fired per tile crossed) exactly as before Line/Rectangle existed.</summary>
+    public static readonly StyledProperty<IReadOnlyList<TilePosition>?> ShapeStrokeTilesProperty =
+        AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<TilePosition>?>(nameof(ShapeStrokeTiles), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
+
+    /// <summary>The exact entities a pending placement/move is blocked by (MapTabViewModel.
+    /// BlockedEntities, straight from PendingPlacement.Blocking) - highlighted on the map so the
+    /// blocked-placement message isn't the only signal of what's actually in the way.</summary>
+    public static readonly StyledProperty<IReadOnlyList<MapEntitySummary>> BlockedEntitiesProperty =
+        AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<MapEntitySummary>>(nameof(BlockedEntities), Array.Empty<MapEntitySummary>());
+
+    /// <summary>The raw tile(s) a placement/move was rejected at with no entity to blame (water/
+    /// unbuildable ground - MapTabViewModel.PlacementBlockedTiles).</summary>
+    public static readonly StyledProperty<IReadOnlyList<TilePosition>> BlockedTilesProperty =
+        AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<TilePosition>>(nameof(BlockedTiles), Array.Empty<TilePosition>());
 
     /// <summary>Size of the hover-preview outline drawn under the cursor while a draw tool is
     /// armed (see DrawHoverPreview) - the ViewModel sets this to the Building tool's real
@@ -195,6 +238,30 @@ public sealed class FarmMapControl : Control
         private set => SetValue(MoveRequestProperty, value);
     }
 
+    public int CopyRequest
+    {
+        get => GetValue(CopyRequestProperty);
+        private set => SetValue(CopyRequestProperty, value);
+    }
+
+    public int PasteRequest
+    {
+        get => GetValue(PasteRequestProperty);
+        private set => SetValue(PasteRequestProperty, value);
+    }
+
+    public int DuplicateRequest
+    {
+        get => GetValue(DuplicateRequestProperty);
+        private set => SetValue(DuplicateRequestProperty, value);
+    }
+
+    public int DeleteRequest
+    {
+        get => GetValue(DeleteRequestProperty);
+        private set => SetValue(DeleteRequestProperty, value);
+    }
+
     public double Zoom
     {
         get => GetValue(ZoomProperty);
@@ -219,6 +286,30 @@ public sealed class FarmMapControl : Control
         set => SetValue(BrushSizeProperty, value);
     }
 
+    public DrawShape DrawShape
+    {
+        get => GetValue(DrawShapeProperty);
+        set => SetValue(DrawShapeProperty, value);
+    }
+
+    public IReadOnlyList<TilePosition>? ShapeStrokeTiles
+    {
+        get => GetValue(ShapeStrokeTilesProperty);
+        set => SetValue(ShapeStrokeTilesProperty, value);
+    }
+
+    public IReadOnlyList<MapEntitySummary> BlockedEntities
+    {
+        get => GetValue(BlockedEntitiesProperty);
+        set => SetValue(BlockedEntitiesProperty, value);
+    }
+
+    public IReadOnlyList<TilePosition> BlockedTiles
+    {
+        get => GetValue(BlockedTilesProperty);
+        set => SetValue(BlockedTilesProperty, value);
+    }
+
     public int HoverFootprintWidth
     {
         get => GetValue(HoverFootprintWidthProperty);
@@ -241,7 +332,7 @@ public sealed class FarmMapControl : Control
     {
         AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
             ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty, IsPlacementToolActiveProperty, HoverFootprintWidthProperty, HoverFootprintHeightProperty,
-            CurrentDaysPlayedProperty);
+            CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty);
         FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
         ClipToBoundsProperty.OverrideDefaultValue<FarmMapControl>(true); // at native zoom the map is almost always bigger than the viewport - without this it draws straight over the side panel instead of being cropped to its own column
     }
@@ -298,6 +389,11 @@ public sealed class FarmMapControl : Control
     private IReadOnlyList<MapEntitySummary>? _dragGroup; // non-null => the press landed on a SelectedRange member, so the whole group moves together
     private bool _isPainting;
     private TilePosition? _lastPaintedTile;
+
+    /// <summary>Where a Line/Rectangle paint-drag started - Freehand doesn't use this (it only
+    /// ever needs _lastPaintedTile, the most recent tile crossed). Set at press, read at release
+    /// to compute the whole shape's tiles (see ComputeLineTiles/ComputeRectangleTiles).</summary>
+    private TilePosition? _shapeStartTile;
     private bool _needsViewCentering;
     private bool _spaceHeld;
     private Point? _panStartPoint;
@@ -401,6 +497,43 @@ public sealed class FarmMapControl : Control
         DrawMoveGhost(context);
         DrawRangeHighlights(context);
         DrawHoverPreview(context);
+        DrawShapePreview(context);
+        DrawBlockedHighlights(context);
+    }
+
+    /// <summary>Highlights exactly what a blocked placement/move is blocked BY, on the map
+    /// itself - BlockedEntities (a PendingPlacement's own real Blocking list - the same entities
+    /// Confirm would remove) get a red outline around their actual drawn bounds; BlockedTiles
+    /// (no entity to blame - water/unbuildable ground) get a plain red tile outline instead.
+    /// Both clear back to empty the moment a placement/move actually succeeds or the tool/tile
+    /// changes (see MapTabViewModel's PlacementBlockedTiles/BlockedEntities remarks) - this never
+    /// lingers stale.</summary>
+    private void DrawBlockedHighlights(DrawingContext context)
+    {
+        if (_lastLayout is not { } layout)
+            return;
+
+        if (BlockedEntities.Count > 0)
+        {
+            var pen = new Pen(Brushes.Red, 2);
+            foreach (var entity in BlockedEntities)
+            {
+                if (_entityScreenBounds.TryGetValue(entity, out var bounds))
+                    context.DrawRectangle(pen, new Rect(bounds.X - 2, bounds.Y - 2, bounds.Width + 4, bounds.Height + 4));
+            }
+        }
+
+        if (BlockedTiles.Count > 0)
+        {
+            var pen = new Pen(Brushes.Red, 2);
+            var fill = new SolidColorBrush(Colors.Red, 0.2);
+            foreach (var t in BlockedTiles)
+            {
+                var rect = new Rect((t.X - layout.MinX) * layout.Scale, (t.Y - layout.MinY) * layout.Scale, layout.Scale, layout.Scale);
+                context.FillRectangle(fill, rect);
+                context.DrawRectangle(pen, rect);
+            }
+        }
     }
 
     /// <summary>The "effected area" outline under the cursor while a draw tool is armed -
@@ -429,6 +562,82 @@ public sealed class FarmMapControl : Control
 
         context.FillRectangle(new SolidColorBrush(Color.Parse("#4034D058")), rect);
         context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#34D058")), 2), rect);
+    }
+
+    /// <summary>Live preview of the whole Line/Rectangle shape while dragging - same green as
+    /// DrawHoverPreview (this replaces it for the duration of the drag, see DrawHoverPreview's
+    /// own _isPainting guard), just covering every tile the final stroke would actually commit
+    /// instead of a single BrushSize footprint.</summary>
+    private void DrawShapePreview(DrawingContext context)
+    {
+        if (!_isPainting || DrawShape == DrawShape.Freehand
+            || _shapeStartTile is not { } start || _lastPaintedTile is not { } current
+            || _lastLayout is not { } layout)
+        {
+            return;
+        }
+
+        var tiles = DrawShape == DrawShape.Line ? ComputeLineTiles(start, current) : ComputeRectangleTiles(start, current);
+        var fill = new SolidColorBrush(Color.Parse("#4034D058"));
+        var pen = new Pen(new SolidColorBrush(Color.Parse("#34D058")), 2);
+        foreach (var t in tiles)
+        {
+            var rect = new Rect((t.X - layout.MinX) * layout.Scale, (t.Y - layout.MinY) * layout.Scale, layout.Scale, layout.Scale);
+            context.FillRectangle(fill, rect);
+            context.DrawRectangle(pen, rect);
+        }
+    }
+
+    /// <summary>Every tile on the grid line between two tiles (inclusive of both ends) - standard
+    /// Bresenham, the same algorithm most paint/map editors (Tiled included) use for a
+    /// shift-drag/line tool. Single-tile-wide regardless of how steep the line is.</summary>
+    private static List<TilePosition> ComputeLineTiles(TilePosition start, TilePosition end)
+    {
+        var tiles = new List<TilePosition>();
+        var x0 = start.X; var y0 = start.Y;
+        var x1 = end.X; var y1 = end.Y;
+        var dx = Math.Abs(x1 - x0);
+        var dy = -Math.Abs(y1 - y0);
+        var sx = x0 < x1 ? 1 : -1;
+        var sy = y0 < y1 ? 1 : -1;
+        var error = dx + dy;
+
+        while (true)
+        {
+            tiles.Add(new TilePosition(x0, y0));
+            if (x0 == x1 && y0 == y1)
+                break;
+
+            var e2 = 2 * error;
+            if (e2 >= dy)
+            {
+                error += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx)
+            {
+                error += dx;
+                y0 += sy;
+            }
+        }
+
+        return tiles;
+    }
+
+    /// <summary>Every tile in the filled rectangle with the two given tiles as opposite corners
+    /// (inclusive) - order-independent, so dragging in any of the 4 diagonal directions works.</summary>
+    private static List<TilePosition> ComputeRectangleTiles(TilePosition start, TilePosition end)
+    {
+        var tiles = new List<TilePosition>();
+        var minX = Math.Min(start.X, end.X);
+        var maxX = Math.Max(start.X, end.X);
+        var minY = Math.Min(start.Y, end.Y);
+        var maxY = Math.Max(start.Y, end.Y);
+        for (var x = minX; x <= maxX; x++)
+            for (var y = minY; y <= maxY; y++)
+                tiles.Add(new TilePosition(x, y));
+
+        return tiles;
     }
 
     /// <summary>Outlines every entity in SelectedRange so a marquee (or bulk) selection stays
@@ -1328,11 +1537,15 @@ public sealed class FarmMapControl : Control
         // A draw tool being armed turns click-and-drag into "paint one placement per tile
         // crossed" instead of marquee range-select - see OnPointerMoved. A plain click (no
         // drag) behaves the same either way: ClickedTile fires once for the pressed tile.
+        // Line/Rectangle differ here: they don't fire anything at press (or during the drag) -
+        // only a live preview - and commit the whole computed shape once, at release.
         if (IsPlacementToolActive)
         {
             _isPainting = true;
             _lastPaintedTile = tile;
-            ClickedTile = tile;
+            _shapeStartTile = tile;
+            if (DrawShape == DrawShape.Freehand)
+                ClickedTile = tile;
             e.Pointer.Capture(this);
             return;
         }
@@ -1383,7 +1596,16 @@ public sealed class FarmMapControl : Control
                 return;
 
             _lastPaintedTile = paintTile;
-            ClickedTile = paintTile; // each new tile crossed re-fires OnClickedTileChanged, placing (or queuing a confirmation) there
+
+            if (DrawShape == DrawShape.Freehand)
+            {
+                ClickedTile = paintTile; // each new tile crossed re-fires OnClickedTileChanged, placing (or queuing a confirmation) there
+                return;
+            }
+
+            // Line/Rectangle: no placement yet - just redraw the live shape preview (see
+            // DrawShapePreview), committed as one batch only on release.
+            InvalidateVisual();
             return;
         }
 
@@ -1431,8 +1653,17 @@ public sealed class FarmMapControl : Control
 
         if (_isPainting)
         {
+            if (DrawShape != DrawShape.Freehand && _shapeStartTile is { } shapeStart && _lastPaintedTile is { } shapeEnd)
+            {
+                ShapeStrokeTiles = DrawShape == DrawShape.Line
+                    ? ComputeLineTiles(shapeStart, shapeEnd)
+                    : ComputeRectangleTiles(shapeStart, shapeEnd);
+            }
+
             _isPainting = false;
             _lastPaintedTile = null;
+            _shapeStartTile = null;
+            InvalidateVisual();
             return;
         }
 
@@ -1552,6 +1783,53 @@ public sealed class FarmMapControl : Control
             BrushSize = Math.Clamp(BrushSize - 1, 1, MapTabViewModel.MaxBrushSize);
             InvalidateVisual();
         }
+        else if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Key == Key.C)
+        {
+            CopyRequest++;
+            e.Handled = true;
+        }
+        else if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Key == Key.V)
+        {
+            PasteRequest++;
+            e.Handled = true;
+        }
+        else if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Key == Key.D)
+        {
+            DuplicateRequest++;
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Delete or Key.Back)
+        {
+            DeleteRequest++;
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+        {
+            NudgeSelection(e.Key);
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Arrow-key nudge - reuses the exact same MoveRequest pipeline a drag-move already
+    /// produces (see MapTabViewModel.OnMoveRequestChanged), just computed from a 1-tile delta
+    /// instead of a drag. Nudges the whole SelectedRange as one batch if a marquee selection is
+    /// active, otherwise just Selected - same single/multi split as Delete/Copy/Duplicate.</summary>
+    private void NudgeSelection(Key key)
+    {
+        var (dx, dy) = key switch
+        {
+            Key.Left => (-1, 0),
+            Key.Right => (1, 0),
+            Key.Up => (0, -1),
+            _ => (0, 1),
+        };
+
+        var toMove = SelectedRange.Count > 0 ? SelectedRange : Selected is { } s ? new[] { s } : Array.Empty<MapEntitySummary>();
+        if (toMove.Count == 0)
+            return;
+
+        var moves = toMove.Select(entity => (entity, new TilePosition(entity.Position.X + dx, entity.Position.Y + dy))).ToList();
+        MoveRequest = new EntityMoveRequest(moves);
     }
 
     protected override void OnKeyUp(KeyEventArgs e)

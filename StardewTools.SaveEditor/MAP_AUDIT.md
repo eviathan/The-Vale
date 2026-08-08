@@ -568,3 +568,118 @@ as disconnected identical stamps, exactly like paths did before §7.1's fix. Not
 explicitly: it's the *same* underlying pattern (a real per-neighbor connectivity algorithm in the
 decompiled `Fence.cs` that this tool doesn't implement) and would likely follow the same fix shape
 as §7.1 if picked up next — see §5.2 for what's already confirmed about Fence's real field shape.
+
+---
+
+## 8. Update log — 2026-08-08 (same day, second pass): Big Chest, and a real id-space collision bug
+
+Triggered by a direct user report ("big chest modification" missing) followed by a fair challenge:
+why do gaps like this keep surfacing when the full decompiled source is available? Investigated
+past the named example specifically to answer that honestly, not just patch the one item — see 8.2
+for what that turned up.
+
+### 8.1 Big Chest / Big Stone Chest were entirely unplaceable — MEDIUM — **FIXED**
+
+`Data/BigCraftables.json` has 13 real entries keyed by a non-numeric string id instead of a
+number (`"BigChest"`, `"HeavyFurnace"`, `"DeluxeWormBin"`, ...) — all genuine, real, 1.6-era
+items. `PlaceableItems.LoadBigCraftables` (`MapAssets/PlaceableItems.cs`) did
+`if (!int.TryParse(prop.Name, out var index)) continue;`, silently dropping every one of them from
+the placeable-item picker entirely — not a rendering bug or a wrong-shape bug, they simply never
+existed in the tool's own catalog. Cross-referencing confirmed this isn't just Big Chest: **85
+more Data/Objects.json entries** (`Moss`, `CarrotSeeds`, `Book_Speed`, ...) have the exact same
+non-numeric-key shape and are equally invisible right now — see 8.3 for why those specifically
+weren't also fixed this pass.
+
+Root cause of the *identity model* itself, confirmed against the decompiled `Item.cs`: this
+tool's whole placement pipeline (`PlaceableItem.Index`, `ObjectXmlBuilder.Fields`'s `itemId`
+element, every `Is*Id` check) assumed `int ParentSheetIndex` **is** the real item identity, with
+`itemId` written as a same-valued numeric duplicate. That's backwards for any 1.6+ item: `Item.
+ItemId` (`Item.cs:165-178`) is the real, authoritative, serialized identity; `ParentSheetIndex` is
+a *derived* sprite-lookup value (`ParentSheetIndex = ItemRegistry.GetDataOrErrorItem(QualifiedItemId
+).SpriteIndex;`, `Item.cs:365`) that only happens to equal the numeric id for legacy pre-1.6 items,
+which is every item this tool had ever been built against until now.
+
+**Fix**: confirmed both Big Chest (`SpriteIndex` 304) and Big Stone Chest (`SpriteIndex` 328) have
+`Texture: null` in `Data/BigCraftables.json` — meaning, like every legacy numeric entry, they draw
+from the *default* shared BigCraftables sheet this tool already loads, just at a higher index than
+any legacy item uses. So no new texture/rendering work was needed, only carrying the real identity
+through correctly:
+- `PlaceableItem` gained an optional `ItemId` (real string id, null for legacy items) and a
+  computed `RealItemId` (`ItemId ?? Index.ToString()`).
+- `PlaceableItems.LoadBigCraftables` now includes all 13 non-numeric entries, using `SpriteIndex`
+  as the numeric key (for rendering/lid-frame-math purposes) and the real string as `ItemId`.
+- `ObjectXmlBuilder.Fields` takes an optional `itemId` override instead of always writing
+  `parentSheetIndex.ToString()`.
+- `FarmMapEditor.IsChestId`/`ChestVariant` recognize 304/328 as Chest-family (`SpecialChestType
+  = "BigChest"` for both — verified verbatim against the decompiled `Chest.SetSpecialChestType()`,
+  `StardewValley.Objects/Chest.cs:546-563`, which maps both `(BC)BigChest` and `(BC)BigStoneChest`
+  to the same `SpecialChestTypes.BigChest`).
+- Found and fixed in the same pass, from the same source cross-reference: `ChestVariant` mapped
+  Junimo Chest (id 256) to `SpecialChestType = "None"` instead of the real `"JunimoChest"` — a
+  pre-existing bug unrelated to Big Chest, caught only because fixing Big Chest required reading
+  the real switch statement directly instead of trusting the existing (subtly wrong) table.
+- No real placed Big Chest/Big Stone Chest exists in any of the 4 sample saves to verify shape
+  against directly — flagged in the code at the same lower-confidence tier as `FlooringEditor`.
+- Verified via the render harness's new `--big-chest-test`: places all three (Big Chest, Big Stone
+  Chest, Junimo Chest), confirms real `xsi:type="Chest"`, confirms the real string `itemId` for the
+  two Big Chest variants (not a numeric duplicate), confirms `specialChestType` is correct for all
+  three including the fixed Junimo Chest case.
+
+### 8.2 The real, bigger bug this surfaced: Objects.json and BigCraftables.json are independent id
+spaces that collide far more than assumed — placing several ordinary real items was silently
+producing the wrong save element — HIGH — **FIXED**
+
+While adding Big Chest (id 304), direct cross-reference of both JSON files turned up something
+worse than the missing-item gap: **every single Chest-family id, and 5 of the 17
+`ExoticObjectCatalog` ids, are also a real, different, unrelated Data/Objects.json item at the
+exact same number** — and none of this tool's special-routing checks (`IsChestId`,
+`IsAutoGrabberId`, `IsExoticObjectId`) checked `IsBigCraftable` before matching, only the bare
+numeric id:
+
+| id | As a Chest/Exotic BigCraftable | As a plain Objects.json item |
+|---|---|---|
+| 130 / 232 / 256 / 216 / 248 / 275 | Chest / Stone Chest / Junimo Chest / Mini-Fridge / Mini-Shipping Bin / Hopper | Tuna / Rice Pudding / Tomato / Bread / Garlic / Artifact Trove |
+| 304 / 328 | Big Chest / Big Stone Chest | Hops / Wood Floor |
+| 165 | Auto-Grabber | Scorpion Carp |
+| 38 / 62 / 208 / 209 / 211 / 214 | Stone Sign / Garden Pot / Workbench / Mini-Jukebox / Wood Chipper / Telephone | Stone / Aquamarine / Glazed Yams / Carp Surprise / Pancakes / Crispy Bass |
+| 94 | (BigCraftables' own id 94 is "Singing Stone", unrelated and unmodeled) | Spirit Torch — correctly `Torch`-family already, not part of this bug |
+
+Concretely: **placing an ordinary Tuna, Tomato, Bread, Garlic, or Pancakes** (all common, everyday
+placeable food items — not exotic edge cases) **through the picker would have silently produced an
+`<Object xsi:type="Chest">` (or `"WoodChipper"`, `"MiniJukebox"`, ...) named "Tuna" with that
+BigCraftable's extra fields**, not the plain food object the player actually selected. This is a
+real, confirmed, silent data-corruption bug on common items, not a missing feature — and it was
+latent (not yet triggered by anything reported) because nothing had happened to place one of these
+specific colliding items through this tool before. `Data/Objects.json` and `Data/BigCraftables.json`
+are independent id spaces by design (confirmed elsewhere in this codebase's own existing comments:
+"index 68 is a different item in each file") — this bug was in treating them as one shared space
+for these four routing checks specifically, while every other part of the tool (rendering,
+`PlaceableItem.IsBigCraftable` itself) already correctly kept them separate.
+
+**Fix**: `IsChestId`, `IsAutoGrabberId`, `IsExoticObjectId`, and `ExoticObjectCatalog`'s own lookup
+table now all key on `(index, isBigCraftable)` together, not index alone, with every existing
+entry's real `IsBigCraftable` flag confirmed by direct cross-reference of both JSON files (not
+assumed). `IsFloorPathItemId` was also updated for symmetry/defensiveness, even though direct
+cross-reference confirmed none of its 13 ids currently collide with a `BigCraftables.json` entry.
+Verified via the render harness's new `--id-collision-test`: places all 14 confirmed-colliding
+plain items (Tuna, Rice Pudding, Tomato, Bread, Garlic, Artifact Trove, Hops, Scorpion Carp,
+Pancakes, Crispy Bass, Stone, Aquamarine, Glazed Yams, Carp Surprise) and confirms every one now
+produces a genuinely plain `<Object>` with no `xsi:type`, not the colliding BigCraftable's.
+
+### 8.3 Still open: 85 Data/Objects.json items with a non-numeric key remain unplaceable — MEDIUM,
+explicitly scoped out this pass, not silently dropped
+
+Unlike the 13 `BigCraftables.json` entries fixed in 8.1 (all `Texture: null`, i.e. the existing
+default shared sheet), most of these 85 (`Moss`, `CarrotSeeds`, `Book_Speed`, `GoldCoin`, ...) have
+`"Texture": "TileSheets\\Objects_2"` — a second, real, already-bundled sprite sheet
+(`TileSheets/Objects_2.png`, confirmed present, 128×320px = 8 columns of 16px cells, a *different*
+column count than the legacy 384px/24-column sheet `ObjectSprites.cs` hardcodes) that nothing in
+this tool loads or knows about yet. Closing this gap properly needs: (1) generalizing
+`ObjectSprites`/`BigCraftableSprites` to compute column count from the actual loaded bitmap's width
+(`Game1.getSourceRectForStandardTileSheet`'s real formula, already confirmed correct in principle —
+see §4 — just currently hardcoded to one specific sheet's column count) rather than assuming 24
+always; (2) a per-item texture-file selection driven by each item's own `Data/Objects.json`
+`Texture` field, not a single hardcoded path. Both are real, tractable, *not* a fundamentally
+different architecture — but distinct, additional work from 8.1's fix, which is why it wasn't
+folded in silently. Recorded here so it isn't rediscovered from scratch, and so "why don't these
+show up in the picker" has a real, checked answer rather than a guess.

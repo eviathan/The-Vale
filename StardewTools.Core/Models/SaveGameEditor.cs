@@ -33,6 +33,11 @@ public sealed class SaveGameEditor
         Map = new FarmMapEditor(farmLocation);
     }
 
+    /// <summary>The underlying raw document - exposed for undo/redo (StardewTools.SaveEditor.
+    /// UndoManager), which needs to subscribe to real change events and clone/restore full
+    /// snapshots without this class needing to know undo exists.</summary>
+    public SaveFile SaveFile => _saveFile;
+
     public PlayerEditor Player { get; }
     public StatsEditor Stats { get; }
     public AchievementsEditor Achievements { get; }

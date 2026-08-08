@@ -99,7 +99,7 @@ public sealed class FarmMapEditor
     /// junk ("asdf" as a type, wrong category) in a real save this was verified against,
     /// apparently from some earlier, unrelated tool.
     /// </summary>
-    public PlacedObjectEditor AddObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type, bool bigCraftable = false)
+    public PlacedObjectEditor AddObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type, bool bigCraftable = false, string? itemId = null)
     {
         var container = _farmLocation.Element("objects");
         if (container is null)
@@ -108,7 +108,7 @@ public sealed class FarmMapEditor
             _farmLocation.Add(container);
         }
 
-        var value = new XElement("Object", ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable, 1, position.X, position.Y));
+        var value = new XElement("Object", ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable, 1, position.X, position.Y, itemId: itemId));
 
         var item = new XElement("item",
             new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
@@ -128,7 +128,7 @@ public sealed class FarmMapEditor
     /// fields - copied from a real placed "Stone Chest" in an actual save; see
     /// ObjectXmlBuilder/ChestXmlBuilder remarks.
     /// </summary>
-    public PlacedObjectEditor AddChest(TilePosition position, int parentSheetIndex, string name, int price)
+    public PlacedObjectEditor AddChest(TilePosition position, int parentSheetIndex, string name, int price, string? itemId = null)
     {
         var container = _farmLocation.Element("objects");
         if (container is null)
@@ -138,7 +138,7 @@ public sealed class FarmMapEditor
         }
 
         var (lidFrameCount, fridge, specialChestType) = ChestVariant(parentSheetIndex);
-        var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility: -300, category: -9, type: "Crafting", bigCraftable: true, stack: 1, position.X, position.Y)
+        var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility: -300, category: -9, type: "Crafting", bigCraftable: true, stack: 1, position.X, position.Y, itemId: itemId)
             .Concat(ChestXmlBuilder.Fields(parentSheetIndex, lidFrameCount, fridge, specialChestType));
 
         var value = new XElement("Object", new XAttribute(XsiType, "Chest"), fields);
@@ -151,29 +151,47 @@ public sealed class FarmMapEditor
         return new PlacedObjectEditor(position, value);
     }
 
-    /// <summary>Mini-Fridge/Mini-Shipping Bin/Hopper are real Chest instances under the hood
-    /// (confirmed via decompiled Object.cs placement code: each calls `new Chest(...)`, not a
-    /// distinct class) that each override exactly one field from a plain Chest's defaults -
-    /// see ChestXmlBuilder remarks.</summary>
+    /// <summary>Mini-Fridge/Mini-Shipping Bin/Hopper/Big Chest/Big Stone Chest are real Chest
+    /// instances under the hood (confirmed via decompiled Object.cs placement code: each calls
+    /// `new Chest(...)`, not a distinct class) that each override exactly one field from a plain
+    /// Chest's defaults - see ChestXmlBuilder remarks. SpecialChestType values verified verbatim
+    /// against the decompiled Chest.SetSpecialChestType()'s own QualifiedItemId switch
+    /// (StardewValley.Objects/Chest.cs:546-563) - this previously mapped id 256 (Junimo Chest) to
+    /// "None" instead of the real "JunimoChest", a real bug found while cross-referencing this
+    /// switch against the decompiled source for the Big Chest fix below (2026-08-08).</summary>
     private static (int LidFrameCount, bool Fridge, string SpecialChestType) ChestVariant(int parentSheetIndex) => parentSheetIndex switch
     {
         216 => (2, true, "None"),               // Mini-Fridge
         248 => (5, false, "MiniShippingBin"),    // Mini-Shipping Bin
+        256 => (5, false, "JunimoChest"),        // Junimo Chest
         275 => (2, false, "AutoLoader"),         // Hopper
-        _ => (5, false, "None"),                 // Chest / Stone Chest / Junimo Chest
+        304 or 328 => (5, false, "BigChest"),    // Big Chest / Big Stone Chest
+        _ => (5, false, "None"),                 // Chest / Stone Chest
     };
 
     /// <summary>Real Data/BigCraftables.json ids that are secretly a Chest under the hood -
-    /// Chest, Stone Chest, Junimo Chest, Mini-Fridge, Mini-Shipping Bin, Hopper. "Big Chest"/
-    /// "Big Stone Chest" use non-numeric ids ("BigChest"/"BigStoneChest") and aren't reachable
-    /// through the numeric-id placeable-item picker at all.</summary>
-    public static bool IsChestId(int parentSheetIndex) => parentSheetIndex is 130 or 232 or 256 or 216 or 248 or 275;
+    /// Chest, Stone Chest, Junimo Chest, Mini-Fridge, Mini-Shipping Bin, Hopper, and (via their
+    /// real SpriteIndex - see PlaceableItems.LoadBigCraftables) Big Chest (304)/Big Stone Chest
+    /// (328), whose actual save id is the non-numeric "BigChest"/"BigStoneChest" (threaded
+    /// through separately as PlaceableItem.ItemId, not this numeric key).
+    ///
+    /// Requires isBigCraftable=true - confirmed by direct cross-reference of both JSON files
+    /// that EVERY one of these ids also names a completely different, unrelated plain
+    /// (non-bigCraftable) Objects.json food/produce item at the same number (130=Tuna,
+    /// 232=Rice Pudding, 256=Tomato, 216=Bread, 248=Garlic, 275=Artifact Trove, 304=Hops,
+    /// 328=Wood Floor). Before this check took isBigCraftable into account, placing any of those
+    /// eight completely ordinary items would have silently routed through AddChest instead of
+    /// AddObject - a real, confirmed latent bug (never triggered until this pass added 304/328,
+    /// which is what surfaced the general pattern) fixed 2026-08-08 alongside the Big Chest
+    /// addition - see MAP_AUDIT.md.</summary>
+    public static bool IsChestId(int parentSheetIndex, bool isBigCraftable) => isBigCraftable && parentSheetIndex is 130 or 232 or 256 or 216 or 248 or 275 or 304 or 328;
 
     /// <summary>Places one of the Object subclasses that needs its own xsi:type and a handful of
     /// extra fields, but isn't a Chest and isn't Auto-Grabber - Cask, Item Pedestal, Torch/Spirit
     /// Torch, Signs, Garden Pot, Workbench, Mini-Jukebox, Wood Chipper, Telephone, Crab Pot,
     /// Fences. See ExoticObjectCatalog for the per-item xsi:type/extra-fields/canBeGrabbed
-    /// lookup this pulls from.</summary>
+    /// lookup this pulls from (keyed by id AND isBigCraftable together - see its remarks for why
+    /// id alone isn't enough here either).</summary>
     public PlacedObjectEditor AddExoticObject(TilePosition position, int parentSheetIndex, string name, int price, int edibility, int category, string type, bool bigCraftable)
     {
         var container = _farmLocation.Element("objects");
@@ -183,7 +201,7 @@ public sealed class FarmMapEditor
             _farmLocation.Add(container);
         }
 
-        var spec = ExoticObjectCatalog.Lookup(parentSheetIndex);
+        var spec = ExoticObjectCatalog.Lookup(parentSheetIndex, bigCraftable);
         var fields = ObjectXmlBuilder.Fields(name, parentSheetIndex, price, edibility, category, type, bigCraftable, stack: 1, position.X, position.Y, includeQuestId: spec.IncludeQuestId, canBeGrabbed: spec.CanBeGrabbed)
             .Concat(spec.ExtraFields(parentSheetIndex));
 
@@ -197,15 +215,20 @@ public sealed class FarmMapEditor
         return new PlacedObjectEditor(position, value);
     }
 
-    public static bool IsExoticObjectId(int parentSheetIndex) => ExoticObjectCatalog.IsKnown(parentSheetIndex);
+    public static bool IsExoticObjectId(int parentSheetIndex, bool isBigCraftable) => ExoticObjectCatalog.IsKnown(parentSheetIndex, isBigCraftable);
 
-    public static bool IsAutoGrabberId(int parentSheetIndex) => parentSheetIndex == 165;
+    /// <summary>Requires isBigCraftable=true - Objects.json's own id 165 is the unrelated
+    /// "Scorpion Carp" fish (same collision pattern as IsChestId above).</summary>
+    public static bool IsAutoGrabberId(int parentSheetIndex, bool isBigCraftable) => isBigCraftable && parentSheetIndex == 165;
 
     /// <summary>Real Data/Objects.json ids for the placeable floor/path items (Wood/Stone/
     /// Weathered/Crystal/Straw/Brick/Rustic Plank Floor, Gravel/Wood/Crystal/Cobblestone/
     /// Stepping Stone Path) - confirmed via decompiled Object.placementAction's IsFloorPathItem()
-    /// branch that these never become a plain placed Object at all; see AddFlooring.</summary>
-    public static bool IsFloorPathItemId(int parentSheetIndex) => FloorPathCatalog.IsKnown(parentSheetIndex);
+    /// branch that these never become a plain placed Object at all; see AddFlooring. None of
+    /// these 13 ids collide with a BigCraftables.json entry (confirmed by direct cross-reference),
+    /// but isBigCraftable is still checked for symmetry/defensiveness with the Chest/Exotic checks
+    /// above, which do have real collisions - costs nothing and stays correct if that ever changes.</summary>
+    public static bool IsFloorPathItemId(int parentSheetIndex, bool isBigCraftable) => !isBigCraftable && FloorPathCatalog.IsKnown(parentSheetIndex);
 
     /// <summary>
     /// Places a floor/path tile - confirmed via the decompiled Object.placementAction's
@@ -496,6 +519,94 @@ public sealed class FarmMapEditor
     public void Move(PlacedObjectEditor placedObject, TilePosition newPosition) => placedObject.Move(newPosition);
     public void Move(BuildingEditor building, TilePosition newPosition) => building.Move(newPosition);
     public void Move(BushEditor bush, TilePosition newPosition) => bush.Move(newPosition);
+
+    /// <summary>
+    /// Copy/paste and duplicate (see MapTabViewModel) - deep-clones the source's own wrapping
+    /// XML node (the &lt;item&gt; for a tile-dictionary entry, the flat-list element for
+    /// Building/Bush/ResourceClump), re-parents the clone into the same real container the
+    /// original lives in, wraps it in a fresh Editor instance, then repositions via that
+    /// instance's own already-real Move() - the same one used for drag-to-move, so this needs no
+    /// new per-kind field-copying logic. A cloned Building gets a fresh &lt;id&gt; GUID (real,
+    /// confirmed field - uniqueness matters, unlike every other kind here which has no such id).
+    /// </summary>
+    public object CloneEntityAt(object source, TilePosition newPosition)
+    {
+        // Every tile-dictionary entry (Tree/Grass/HoeDirt/Flooring/Object) is
+        // <item><key>...</key><value>{single real element}</value></item> - the constructors take
+        // that single real element directly (TreeEditor._feature.Parent!.Parent! climbs value then
+        // item to find Item, so passing <value> itself here instead of its child would corrupt
+        // that climb by one level), matching DictionaryEntries' own "value's single child" shape.
+        switch (source)
+        {
+            case TreeEditor tree:
+            {
+                var clonedItem = new XElement(tree.Item);
+                TerrainFeaturesContainer().Add(clonedItem);
+                var result = new TreeEditor(tree.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case GrassEditor grass:
+            {
+                var clonedItem = new XElement(grass.Item);
+                TerrainFeaturesContainer().Add(clonedItem);
+                var result = new GrassEditor(grass.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case HoeDirtEditor dirt:
+            {
+                var clonedItem = new XElement(dirt.Item);
+                TerrainFeaturesContainer().Add(clonedItem);
+                var result = new HoeDirtEditor(dirt.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case FlooringEditor flooring:
+            {
+                var clonedItem = new XElement(flooring.Item);
+                TerrainFeaturesContainer().Add(clonedItem);
+                var result = new FlooringEditor(flooring.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case PlacedObjectEditor placedObject:
+            {
+                var clonedItem = new XElement(placedObject.WrappingItem);
+                _farmLocation.Element("objects")!.Add(clonedItem);
+                var result = new PlacedObjectEditor(placedObject.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case ResourceClumpEditor clump:
+            {
+                var clonedElement = new XElement(clump.Element);
+                _farmLocation.Element("resourceClumps")!.Add(clonedElement);
+                var result = new ResourceClumpEditor(clonedElement);
+                result.Move(newPosition);
+                return result;
+            }
+            case BuildingEditor building:
+            {
+                var clonedElement = new XElement(building.Element);
+                clonedElement.Element("id")!.Value = Guid.NewGuid().ToString();
+                _farmLocation.Element("buildings")!.Add(clonedElement);
+                var result = new BuildingEditor(clonedElement);
+                result.Move(newPosition);
+                return result;
+            }
+            case BushEditor bush:
+            {
+                var clonedElement = new XElement(bush.Element);
+                _farmLocation.Element("largeTerrainFeatures")!.Add(clonedElement);
+                var result = new BushEditor(clonedElement);
+                result.Move(newPosition);
+                return result;
+            }
+            default:
+                throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}.");
+        }
+    }
 
     /// <summary>
     /// Walks a `&lt;name&gt;&lt;item&gt;&lt;key&gt;&lt;Vector2&gt;X/Y&lt;/Vector2&gt;&lt;/key&gt;

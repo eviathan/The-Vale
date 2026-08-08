@@ -28,6 +28,13 @@ public sealed class SaveFile
     /// <summary>The root &lt;SaveGame&gt; element.</summary>
     public XElement Root { get; }
 
+    /// <summary>The underlying document - exposed so undo/redo (StardewTools.SaveEditor.UndoManager)
+    /// can subscribe to its real XObject.Changing/Changed events (confirmed via a standalone
+    /// reflection test: subscribing at the document level bubbles change notifications from any
+    /// descendant mutation, anywhere in the tree, not just direct children) without this class
+    /// needing to know undo exists.</summary>
+    public XDocument Document => _document;
+
     public static SaveFile Load(string path)
     {
         using var stream = File.OpenRead(path);
@@ -39,6 +46,11 @@ public sealed class SaveFile
         var document = XDocument.Load(stream, LoadOptions.PreserveWhitespace);
         return new SaveFile(document);
     }
+
+    /// <summary>A snapshot of the current state, fully independent of this instance (deep-cloned) -
+    /// used by undo/redo to capture a checkpoint before a mutation, without the cost/complexity of
+    /// a real file round-trip.</summary>
+    public SaveFile Clone() => new(new XDocument(_document));
 
     public void Save(string path)
     {
