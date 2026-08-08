@@ -32,6 +32,12 @@ public partial class SaveEditorViewModel : ViewModelBase
             CanUndo = _undo.CanUndo;
             CanRedo = _undo.CanRedo;
         };
+
+        // "Regenerate Farm" lives entirely on the Farm tab (confirmation UI stays within its own
+        // DataContext scope, no cross-tab XAML binding needed) but the actual wipe touches the
+        // Map tab's state (Entities, rendering) - this callback is the one place those two meet.
+        Farm.RegenerateConfirmed += save => Map.RegenerateFarmContent(save);
+        Farm.GreenhouseUnlockedChanged += value => Map.GreenhouseUnlocked = value;
     }
 
     public PlayerTabViewModel Player { get; } = new();

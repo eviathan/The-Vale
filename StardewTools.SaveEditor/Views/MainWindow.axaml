@@ -517,7 +517,25 @@
                             <StackPanel Classes="field">
                                 <TextBlock Text="Farm Type"/>
                                 <ComboBox ItemsSource="{Binding FarmTypes}" SelectedItem="{Binding SelectedFarmType}" Width="180"/>
+                                <TextBlock Text="Changing this alone only records the farm type - it does not touch your farm's terrain or anything on it. Use Regenerate Farm below to actually apply it."
+                                           Opacity="0.7" TextWrapping="Wrap" Width="400" FontSize="11"/>
                             </StackPanel>
+
+                            <StackPanel Spacing="6" IsVisible="{Binding !IsConfirmingRegenerate}">
+                                <Button Content="Regenerate Farm to Match This Type" Command="{Binding RequestRegenerateCommand}"/>
+                            </StackPanel>
+                            <Border IsVisible="{Binding IsConfirmingRegenerate}" BorderBrush="Orange" BorderThickness="2" Padding="10" CornerRadius="4">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="This will permanently delete everything on your Farm" FontWeight="Bold" Foreground="Orange" TextWrapping="Wrap"/>
+                                    <TextBlock TextWrapping="Wrap" Width="380"
+                                               Text="Every tree, crop, building, resource clump, and other placed object on the Farm will be removed, and the terrain will be replaced with a fresh Farm Type layout. Your Farmhouse and Greenhouse (and everything inside them) are not affected. This does not touch any other location. You can undo this afterward with Ctrl+Z if you change your mind."/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Regenerate Farm" Command="{Binding ConfirmRegenerateCommand}" Background="OrangeRed"/>
+                                        <Button Content="Cancel" Command="{Binding CancelRegenerateCommand}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
                             <StackPanel Classes="field">
                                 <TextBlock Text="Weather Tomorrow"/>
                                 <TextBox Text="{Binding WeatherForTomorrow}" Width="180"/>
@@ -527,6 +545,11 @@
                             <StackPanel Classes="field">
                                 <TextBlock Text="Daily Luck"/>
                                 <NumericUpDown Value="{Binding DailyLuck}" Minimum="-1" Maximum="1" Increment="0.01" FormatString="0.00"/>
+                            </StackPanel>
+                            <StackPanel Classes="field">
+                                <CheckBox Content="Greenhouse unlocked" IsChecked="{Binding IsGreenhouseUnlocked}"/>
+                                <TextBlock Text="Normally unlocks on completing the Pantry bundle (or the Joja equivalent). The Greenhouse building and its interior always exist and look the same either way - this only gates whether crops planted inside actually grow."
+                                           Opacity="0.7" TextWrapping="Wrap" Width="400" FontSize="11"/>
                             </StackPanel>
                             <TextBlock Text="Buildings" FontWeight="Bold" Margin="0,12,0,0"/>
                             <ItemsControl ItemsSource="{Binding BuildingTypes}"/>
@@ -588,6 +611,9 @@
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding SelectedLocationName}"
+                                                          FarmMapFileName="{Binding FarmMapFileName}"
+                                                          FarmHouseMapFileName="{Binding FarmHouseMapFileName}"
+                                                          GreenhouseUnlocked="{Binding GreenhouseUnlocked}"
                                                           HouseUpgradeLevel="{Binding HouseUpgradeLevel}"
                                                           ClickedTile="{Binding ClickedTile}"
                                                           SelectedRange="{Binding SelectedRange}"
@@ -599,6 +625,7 @@
                                                           DeleteRequest="{Binding DeleteRequest}"
                                                           BrushSize="{Binding BrushSize}"
                                                           DrawShape="{Binding DrawShape}"
+                                                          IsShapeDrawEligible="{Binding IsShapeDrawEligible}"
                                                           ShapeStrokeTiles="{Binding ShapeStrokeTiles}"
                                                           BlockedEntities="{Binding BlockedEntities}"
                                                           BlockedTiles="{Binding PlacementBlockedTiles}"

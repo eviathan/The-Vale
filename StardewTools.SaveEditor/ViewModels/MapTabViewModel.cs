@@ -104,6 +104,26 @@ public partial class MapTabViewModel : ViewModelBase
     private string _selectedLocationName = "Farm";
     [ObservableProperty] private int _houseUpgradeLevel;
 
+    /// <summary>Which real .tmx file FarmMapControl should load for the FarmHouse location -
+    /// derived from HouseUpgradeLevel (see FarmHouseMapFileNameFor) instead of the old hardcoded
+    /// "FarmHouse.tmx" (the level-0 starter layout) for every upgrade level. Kept in sync in
+    /// Bind() and whenever HouseUpgradeLevel changes (OnHouseUpgradeLevelChanged) - real
+    /// user-reported bug: upgrading the house via this tool kept showing the tiny starter
+    /// layout's walls with the real (bigger) house's furniture floating outside them.</summary>
+    [ObservableProperty] private string _farmHouseMapFileName = "FarmHouse";
+
+    /// <summary>Mirrors the decompiled FarmHouse.updateMap's real formula (level 0 -> "FarmHouse",
+    /// 1 -> "FarmHouse1", 2 or 3 -> "FarmHouse2" - level 3's cellar is a separate warp-linked
+    /// location, not a different top-level map). Doesn't account for marriage (a real
+    /// "_marriage" map suffix exists too, not modeled here - see FarmMapControl.
+    /// FarmHouseMapFileNameProperty remarks).</summary>
+    private static string FarmHouseMapFileNameFor(int houseUpgradeLevel) => houseUpgradeLevel switch
+    {
+        <= 0 => "FarmHouse",
+        1 => "FarmHouse1",
+        _ => "FarmHouse2",
+    };
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(BackToParentLocationCommand))]
     private bool _hasLocationHistory;
@@ -145,6 +165,13 @@ public partial class MapTabViewModel : ViewModelBase
     /// sprite (see BushEditor.DatePlanted / FarmMapControl.CurrentDaysPlayed). Set once in Bind()
     /// and bound OneWay through to FarmMapControl; not itself editable from the Map tab.</summary>
     [ObservableProperty] private int _currentDaysPlayed;
+
+    /// <summary>Purely a rendering input for FarmMapControl's Greenhouse sprite frame - NOT the
+    /// source of truth (that's FarmTabViewModel.IsGreenhouseUnlocked, which owns the actual
+    /// save write-through). Set fresh from the same save data in Bind(), and kept live afterward
+    /// via SaveEditorViewModel wiring Farm.GreenhouseUnlockedChanged into this property, so
+    /// toggling the checkbox on the Farm tab immediately updates what's drawn here too.</summary>
+    [ObservableProperty] private bool _greenhouseUnlocked;
 
     public const int MaxBrushSize = 9;
 
@@ -816,6 +843,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         if (_save is not null)
             _save.Player.HouseUpgradeLevel = value;
+        FarmHouseMapFileName = FarmHouseMapFileNameFor(value);
     }
 
     /// <summary>Pushes the current location onto the breadcrumb stack and switches to name -
@@ -850,8 +878,11 @@ public partial class MapTabViewModel : ViewModelBase
         _mapLocationName = "Farm";
         _inventory = save.Player.Inventory;
         Season = save.Season;
+        FarmMapFileName = FarmTypeMaps.MapNameFor(save.Farm.WhichFarm);
         HouseUpgradeLevel = save.Player.HouseUpgradeLevel;
+        FarmHouseMapFileName = FarmHouseMapFileNameFor(HouseUpgradeLevel);
         CurrentDaysPlayed = save.Stats.DaysPlayed;
+        GreenhouseUnlocked = save.Map.GreenhouseUnlocked;
         Selected = null;
         SelectedRange = Array.Empty<MapEntitySummary>();
         _locationHistory.Clear();
@@ -893,6 +924,49 @@ public partial class MapTabViewModel : ViewModelBase
             : $"{_farmEntitiesCache.Count} placed entities on the Farm. Also {unmodeled.Count} tile(s) of " +
               $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
         RecomputeUnmodeledContentWarnings(unmodeled);
+    }
+
+    /// <summary>Which real .tmx file FarmMapControl should load for the Farm location - derived
+    /// from the save's real whichFarm field (FarmTypeMaps) instead of the old hardcoded
+    /// "Farm.tmx" for every farm type. Kept in sync in Bind() and RegenerateFarmContent(); the
+    /// Farm tab's own Farm Type picker (FarmTabViewModel) only writes whichFarm itself - it
+    /// doesn't touch this or the Map tab at all, since just picking a type is meant to be
+    /// harmless metadata-only until Regenerate Farm is explicitly confirmed (SaveEditorViewModel).</summary>
+    [ObservableProperty] private string _farmMapFileName = "Farm";
+
+    /// <summary>The destructive half of "Regenerate Farm" (SaveEditorViewModel.
+    /// ConfirmRegenerateFarmCommand, after its own confirmation prompt) - wipes every placed
+    /// entity on the real Farm location (FarmMapEditor.ClearAllContent) and switches which .tmx
+    /// renders it to match the save's current whichFarm, regardless of which location is
+    /// currently being viewed (uses save.Map, the Farm's own stable editor - NOT _map, which
+    /// tracks whatever location is currently selected and may be pointed at Greenhouse/an
+    /// interior right now). Only refreshes the visible Entities/rendering if Farm is the
+    /// currently-selected location; otherwise the wipe still happens on disk but the user's
+    /// current view (some other location) is left alone until they switch back.</summary>
+    public void RegenerateFarmContent(SaveGameEditor save)
+    {
+        save.Map.ClearAllContent();
+        FarmMapFileName = FarmTypeMaps.MapNameFor(save.Farm.WhichFarm);
+
+        // Same self-healing re-add Bind() already does for a farm with no Farmhouse building
+        // wrapper yet - ClearAllContent wipes it along with everything else, so every farm ends
+        // up needing it re-added here as if this were a save that never had one.
+        if (save.Map.Buildings.All(b => b.BuildingType != "Farmhouse"))
+            save.Map.AddFarmhouse(new TilePosition(59, 12));
+
+        if (SelectedLocationName != "Farm")
+            return;
+
+        _farmEntitiesCache = LoadEntitiesFrom(save.Map);
+        Entities.Clear();
+        foreach (var entity in _farmEntitiesCache)
+            Entities.Add(entity);
+        Selected = null;
+        SelectedRange = Array.Empty<MapEntitySummary>();
+        PendingPlacement = null;
+
+        Summary = $"{_farmEntitiesCache.Count} placed entities on the Farm. Regenerated to match the new farm type.";
+        RecomputeUnmodeledContentWarnings(Array.Empty<(TilePosition Position, string Type)>());
     }
 
     private bool CanPlaceObject() => _map is not null && SelectedPlaceableItem is not null && ClickedTile is not null && SelectedLocationName == _mapLocationName;

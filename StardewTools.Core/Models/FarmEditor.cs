@@ -13,11 +13,29 @@ public sealed class FarmEditor
         _root = saveGameRoot;
     }
 
-    /// <summary>0=Standard, 1=Riverland, 2=Forest, 3=Hilltop, 4=Wilderness, 5=FourCorners, 6=Beach, 7=MeadowlandsFarm.</summary>
+    /// <summary>The vanilla farm-type id used for 7=Meadowlands (added via the same
+    /// Data/AdditionalFarms.json mod-farm-type system third-party farms use, confirmed via
+    /// AdditionalFarms.json's own "MeadowlandsFarm" entry).</summary>
+    public const string MeadowlandsFarmId = "MeadowlandsFarm";
+
+    /// <summary>0=Standard, 1=Riverland, 2=Forest, 3=Hilltop, 4=Wilderness, 5=FourCorners,
+    /// 6=Beach, 7=Meadowlands. The real save field (SaveGame.whichFarm) is a STRING, not an int -
+    /// confirmed via decompiled SaveGame.cs: it writes Game1.whichFarm.ToString() for values 0-6,
+    /// but the literal id string "MeadowlandsFarm" for 7 (a mod-farm-type id, since Meadowlands
+    /// was added through the same extensible AdditionalFarms system real farm mods use, even
+    /// though it ships vanilla). A plain GetChildInt/SetChildInt would silently corrupt a
+    /// Meadowlands save - parsing "MeadowlandsFarm" as an int fails and defaults to 0 on read,
+    /// and writing a bare "7" back on set would break the real id the game expects to find.</summary>
     public int WhichFarm
     {
-        get => _root.GetChildInt("whichFarm");
-        set => _root.SetChildInt("whichFarm", value);
+        get
+        {
+            var raw = _root.GetChildText("whichFarm");
+            if (raw == MeadowlandsFarmId)
+                return 7;
+            return int.TryParse(raw, out var value) ? value : 0;
+        }
+        set => _root.SetChildText("whichFarm", value == 7 ? MeadowlandsFarmId : value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>Real field is `public static string Game1.weatherForTomorrow` - a weather

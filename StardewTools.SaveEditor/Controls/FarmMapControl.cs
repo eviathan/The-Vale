@@ -47,8 +47,40 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<string> LocationNameProperty =
         AvaloniaProperty.Register<FarmMapControl, string>(nameof(LocationName), "Farm");
 
+    /// <summary>Which real .tmx file to load when LocationName is "Farm" - MapTabViewModel sets
+    /// this from the save's real whichFarm field (see FarmTypeMaps) instead of always loading
+    /// "Farm.tmx" regardless of farm type. LocationName itself stays "Farm" unconditionally
+    /// (entity binding/identity checks elsewhere key off that exact string - see e.g. the
+    /// Farmhouse-insertion check below), so this needs its own property rather than repurposing
+    /// LocationName. Null/empty falls back to LocationName, i.e. the old "Farm.tmx" behavior.</summary>
+    public static readonly StyledProperty<string?> FarmMapFileNameProperty =
+        AvaloniaProperty.Register<FarmMapControl, string?>(nameof(FarmMapFileName));
+
+    /// <summary>Same idea as FarmMapFileName, for LocationName == "FarmHouse" - the real game
+    /// picks "FarmHouse"/"FarmHouse1"/"FarmHouse2" by the player's real houseUpgradeLevel
+    /// (confirmed via decompiled FarmHouse.updateMap: level 0 -> "FarmHouse", 1 -> "FarmHouse1",
+    /// 2 or 3 -> "FarmHouse2" - level 3's cellar is a separate warp-linked location, not a
+    /// different top-level map). This tool previously always loaded "FarmHouse.tmx" (the level-0
+    /// starter layout) regardless of the player's real upgrade level, so upgrading the house via
+    /// this tool's own HouseUpgradeLevel control kept showing the tiny starter house's walls with
+    /// the real (larger) house's furniture floating outside them - real user-reported symptom.
+    /// Doesn't account for marriage (a real "_marriage" map suffix exists too) - not modeled here,
+    /// a married player's real in-game layout differs slightly (an added spouse room).</summary>
+    public static readonly StyledProperty<string?> FarmHouseMapFileNameProperty =
+        AvaloniaProperty.Register<FarmMapControl, string?>(nameof(FarmHouseMapFileName));
+
     public static readonly StyledProperty<int> HouseUpgradeLevelProperty =
         AvaloniaProperty.Register<FarmMapControl, int>(nameof(HouseUpgradeLevel));
+
+    /// <summary>Farm.greenhouseUnlocked (see FarmMapEditor.GreenhouseUnlocked) - the Greenhouse
+    /// building's own sprite sheet has two vertical frames, an overgrown/locked one and the real
+    /// built one, picked by this flag (confirmed via decompiled GreenhouseBuilding.draw(): "if
+    /// (!GetFarm().greenhouseUnlocked.Value) sourceRect.Y -= sourceRect.Height"). This tool
+    /// previously always drew the unlocked frame (Data/Buildings.json's own SourceRect, which
+    /// happens to BE the unlocked frame) regardless of the save's real flag - real user-reported
+    /// bug: "the greenhouse sprite is not correlated to the upgraded state".</summary>
+    public static readonly StyledProperty<bool> GreenhouseUnlockedProperty =
+        AvaloniaProperty.Register<FarmMapControl, bool>(nameof(GreenhouseUnlocked));
 
     public static readonly StyledProperty<TilePosition?> ClickedTileProperty =
         AvaloniaProperty.Register<FarmMapControl, TilePosition?>(nameof(ClickedTile), defaultBindingMode: Avalonia.Data.BindingMode.OneWayToSource);
@@ -112,6 +144,16 @@ public sealed class FarmMapControl : Control
     /// though today it's only ever set from the toolbar toggle.</summary>
     public static readonly StyledProperty<DrawShape> DrawShapeProperty =
         AvaloniaProperty.Register<FarmMapControl, DrawShape>(nameof(DrawShape), DrawShape.Freehand, defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+
+    /// <summary>Mirrors MapTabViewModel.IsShapeDrawEligible (true only for Object/Till/PlantCrop/
+    /// PlantTree) - DrawShape itself doesn't reset when switching tools, so a leftover Line/
+    /// Rectangle selection from an earlier Object-tool stroke must NOT suppress plain clicks for
+    /// Building/PlantBush (which always use their own real footprint per click, ignoring
+    /// DrawShape entirely) - see OnPointerPressed/Moved/Released's DrawShape checks below, all
+    /// gated on this too. Without this, switching to Building after using Line/Rectangle earlier
+    /// left ClickedTile permanently un-set on click, i.e. Building placement silently did nothing.</summary>
+    public static readonly StyledProperty<bool> IsShapeDrawEligibleProperty =
+        AvaloniaProperty.Register<FarmMapControl, bool>(nameof(IsShapeDrawEligible), true);
 
     /// <summary>Fired once, on pointer release, with the whole computed Line/Rectangle shape's
     /// tiles - see MapTabViewModel.OnShapeStrokeTilesChanged. Freehand never sets this; it keeps
@@ -200,12 +242,30 @@ public sealed class FarmMapControl : Control
         set => SetValue(LocationNameProperty, value);
     }
 
+    public string? FarmMapFileName
+    {
+        get => GetValue(FarmMapFileNameProperty);
+        set => SetValue(FarmMapFileNameProperty, value);
+    }
+
+    public string? FarmHouseMapFileName
+    {
+        get => GetValue(FarmHouseMapFileNameProperty);
+        set => SetValue(FarmHouseMapFileNameProperty, value);
+    }
+
     /// <summary>0-3 - drives which exterior the farmhouse overlay uses (see FarmhouseSprite).
     /// Not part of Entities: the farmhouse isn't a placed Building at all.</summary>
     public int HouseUpgradeLevel
     {
         get => GetValue(HouseUpgradeLevelProperty);
         set => SetValue(HouseUpgradeLevelProperty, value);
+    }
+
+    public bool GreenhouseUnlocked
+    {
+        get => GetValue(GreenhouseUnlockedProperty);
+        set => SetValue(GreenhouseUnlockedProperty, value);
     }
 
     /// <summary>The tile under the last click, regardless of whether it hit an entity - lets
@@ -292,6 +352,12 @@ public sealed class FarmMapControl : Control
         set => SetValue(DrawShapeProperty, value);
     }
 
+    public bool IsShapeDrawEligible
+    {
+        get => GetValue(IsShapeDrawEligibleProperty);
+        set => SetValue(IsShapeDrawEligibleProperty, value);
+    }
+
     public IReadOnlyList<TilePosition>? ShapeStrokeTiles
     {
         get => GetValue(ShapeStrokeTilesProperty);
@@ -332,7 +398,7 @@ public sealed class FarmMapControl : Control
     {
         AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
             ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty, IsPlacementToolActiveProperty, HoverFootprintWidthProperty, HoverFootprintHeightProperty,
-            CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty);
+            CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty, FarmMapFileNameProperty, FarmHouseMapFileNameProperty, GreenhouseUnlockedProperty);
         FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
         ClipToBoundsProperty.OverrideDefaultValue<FarmMapControl>(true); // at native zoom the map is almost always bigger than the viewport - without this it draws straight over the side panel instead of being cropped to its own column
     }
@@ -358,6 +424,8 @@ public sealed class FarmMapControl : Control
     private TmxMap? _map;
     private string? _loadedFolder;
     private string? _loadedLocation;
+    private string? _loadedMapFileName;
+    private string? _loadedFarmHouseMapFileName;
     private (double MinX, double MinY, double Scale)? _lastLayout;
 
     /// <summary>Each entity's actual on-screen bounds from the last real-map render - populated
@@ -419,8 +487,8 @@ public sealed class FarmMapControl : Control
                 newIncc.CollectionChanged += OnEntitiesCollectionChanged;
         }
 
-        if ((change.Property == ContentFolderProperty || change.Property == LocationNameProperty)
-            && (ContentFolder != _loadedFolder || LocationName != _loadedLocation))
+        if ((change.Property == ContentFolderProperty || change.Property == LocationNameProperty || change.Property == FarmMapFileNameProperty || change.Property == FarmHouseMapFileNameProperty)
+            && (ContentFolder != _loadedFolder || LocationName != _loadedLocation || FarmMapFileName != _loadedMapFileName || FarmHouseMapFileName != _loadedFarmHouseMapFileName))
         {
             TryLoadMap();
         }
@@ -462,6 +530,8 @@ public sealed class FarmMapControl : Control
     {
         _loadedFolder = ContentFolder;
         _loadedLocation = LocationName;
+        _loadedMapFileName = FarmMapFileName;
+        _loadedFarmHouseMapFileName = FarmHouseMapFileName;
         _map = null;
         _loader = null;
         _needsViewCentering = true; // a genuinely different map just loaded - re-center pan/zoom on it once, then leave the user's view alone
@@ -472,10 +542,13 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        var mapFileName = !string.IsNullOrEmpty(FarmMapFileName) && LocationName == "Farm" ? FarmMapFileName
+            : !string.IsNullOrEmpty(FarmHouseMapFileName) && LocationName == "FarmHouse" ? FarmHouseMapFileName
+            : LocationName;
         try
         {
             _loader = new MapAssetLoader(ContentFolder);
-            _map = _loader.LoadMap(LocationName);
+            _map = _loader.LoadMap(mapFileName);
             Status = $"Real tile art loaded for {LocationName} from {ContentFolder}.";
         }
         catch (Exception ex)
@@ -570,7 +643,7 @@ public sealed class FarmMapControl : Control
     /// instead of a single BrushSize footprint.</summary>
     private void DrawShapePreview(DrawingContext context)
     {
-        if (!_isPainting || DrawShape == DrawShape.Freehand
+        if (!_isPainting || !IsShapeDrawEligible || DrawShape == DrawShape.Freehand
             || _shapeStartTile is not { } start || _lastPaintedTile is not { } current
             || _lastLayout is not { } layout)
         {
@@ -806,9 +879,25 @@ public sealed class FarmMapControl : Control
         // (Maps/paths.png) is a flat gray sheet of numbered debug glyphs; the game reads tile
         // indices from this layer to drive daily forage/stone/twig/stump spawn logic and never
         // draws it. Rendering it painted debug icons across every tile with a spawn point.
+        // "AlwaysFront" (confirmed via decompiled Game1.cs's map-draw call: drawn with a fixed
+        // depth sentinel, not row-based) is the only layer that's genuinely meant to sit on top
+        // of literally everything regardless of position - that one alone stays in the blanket
+        // "draw dead last" pass. "Front" itself is NOT that - the same decompiled call draws it
+        // with a row-based depth bias (64f + a small per-layer offset), meaning in the real game
+        // it Y-sorts against buildings/sprites like everything else, it just tends to win ties
+        // within its own row. Lumping both together (as this used to) meant any tall building
+        // sprite reaching up past its own footprint into an EARLIER row - e.g. a farmhouse's roof
+        // poking up into the row above it - got unconditionally painted over by whatever "Front"
+        // tile art sits in that earlier row (a fence rail, in the real user report this fixes),
+        // even though the building's real sort position is later/lower and should draw on top.
+        // Moving "Front" into the same per-row bucket as Back/Buildings (drawn before that row's
+        // own entities, same as everything else non-Front) fixes that: a building whose sort-row
+        // is BELOW the fence's row now correctly draws over it, matching what selecting the
+        // building already forced via the redraw-last-when-selected fallback below - this makes
+        // that correct outcome the normal case instead of something only selection triggered.
         var visibleLayers = map.Layers.Where(l => !string.Equals(l.Name, "Paths", StringComparison.OrdinalIgnoreCase)).ToList();
         var afterEntityLayers = visibleLayers
-            .Where(l => l.Name.StartsWith("Front", StringComparison.OrdinalIgnoreCase) || l.Name.StartsWith("AlwaysFront", StringComparison.OrdinalIgnoreCase))
+            .Where(l => l.Name.StartsWith("AlwaysFront", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var beforeEntityLayers = visibleLayers.Except(afterEntityLayers).ToList();
 
@@ -1386,6 +1475,13 @@ public sealed class FarmMapControl : Control
         else
         {
             paintTextureFileName = BuildingSprites.TextureFileNameFor(building.BuildingType, building.SkinId);
+
+            // The Greenhouse sheet has two vertical frames - Data/Buildings.json's own SourceRect
+            // (what BuildingSprites just returned) is the unlocked/built frame; the overgrown/
+            // locked frame sits directly above it in the sheet (confirmed via decompiled
+            // GreenhouseBuilding.draw()'s "sourceRect.Y -= sourceRect.Height" when not unlocked).
+            if (building.BuildingType == "Greenhouse" && !GreenhouseUnlocked)
+                source = new Rect(source.X, source.Y - source.Height, source.Width, source.Height);
         }
 
         var paint = building.PaintColor;
@@ -1401,7 +1497,11 @@ public sealed class FarmMapControl : Control
 
         var footprintLeft = pixelOffsetX + position.X * scale;
         var footprintBottom = pixelOffsetY + position.Y * scale + height * scale;
-        var dest = new Rect(footprintLeft + width * scale / 2 - destWidth / 2, footprintBottom - destHeight, destWidth, destHeight);
+        var (drawOffsetX, drawOffsetY) = BuildingSprites.DrawOffsetFor(building.BuildingType);
+        var dest = new Rect(
+            footprintLeft + width * scale / 2 - destWidth / 2 + drawOffsetX * pixelsPerSourcePixel,
+            footprintBottom - destHeight + drawOffsetY * pixelsPerSourcePixel,
+            destWidth, destHeight);
 
         context.DrawImage(bitmap, source, dest);
         drawnBounds = dest;
@@ -1544,7 +1644,7 @@ public sealed class FarmMapControl : Control
             _isPainting = true;
             _lastPaintedTile = tile;
             _shapeStartTile = tile;
-            if (DrawShape == DrawShape.Freehand)
+            if (DrawShape == DrawShape.Freehand || !IsShapeDrawEligible)
                 ClickedTile = tile;
             e.Pointer.Capture(this);
             return;
@@ -1597,7 +1697,7 @@ public sealed class FarmMapControl : Control
 
             _lastPaintedTile = paintTile;
 
-            if (DrawShape == DrawShape.Freehand)
+            if (DrawShape == DrawShape.Freehand || !IsShapeDrawEligible)
             {
                 ClickedTile = paintTile; // each new tile crossed re-fires OnClickedTileChanged, placing (or queuing a confirmation) there
                 return;
@@ -1653,7 +1753,7 @@ public sealed class FarmMapControl : Control
 
         if (_isPainting)
         {
-            if (DrawShape != DrawShape.Freehand && _shapeStartTile is { } shapeStart && _lastPaintedTile is { } shapeEnd)
+            if (DrawShape != DrawShape.Freehand && IsShapeDrawEligible && _shapeStartTile is { } shapeStart && _lastPaintedTile is { } shapeEnd)
             {
                 ShapeStrokeTiles = DrawShape == DrawShape.Line
                     ? ComputeLineTiles(shapeStart, shapeEnd)

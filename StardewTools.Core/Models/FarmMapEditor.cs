@@ -22,6 +22,19 @@ public sealed class FarmMapEditor
         _farmLocation = farmLocationElement;
     }
 
+    /// <summary>Whether the Greenhouse is unlocked (confirmed real field on the Farm location
+    /// itself, &lt;greenhouseUnlocked&gt; - a plain NetBool, gates whether crops planted inside
+    /// actually grow; normally flips true once the Pantry community-center bundle/Joja pantry
+    /// equivalent completes). The Greenhouse's own top-level &lt;GameLocation&gt; and its
+    /// building's exterior sprite exist and render the same regardless of this flag - it's a
+    /// gameplay-functionality gate, not a different visual/map state, so there's nothing else
+    /// for this tool to change alongside it.</summary>
+    public bool GreenhouseUnlocked
+    {
+        get => _farmLocation.TryGetChildBool("greenhouseUnlocked") ?? false;
+        set => _farmLocation.SetChildBoolCreateIfMissing("greenhouseUnlocked", value);
+    }
+
     public IReadOnlyList<TreeEditor> Trees
         => DictionaryEntries("terrainFeatures")
             .Where(e => (string?)e.Value.Attribute(XsiType) == "Tree")
@@ -511,6 +524,26 @@ public sealed class FarmMapEditor
     public void Remove(BuildingEditor building) => building.Element.Remove();
     public void Remove(BushEditor bush) => bush.Element.Remove();
     public void Remove(FlooringEditor flooring) => flooring.Item.Remove();
+
+    /// <summary>Wipes every real, placed entity on this Farm - the "blank slate" half of the
+    /// Farm tab's Regenerate Farm feature (see MapTabViewModel.RegenerateFarm). Clears
+    /// terrainFeatures (Tree/Grass/HoeDirt/Flooring, and any unmodeled type too - nothing left
+    /// half-stale on the new map's terrain), objects, resourceClumps, largeTerrainFeatures
+    /// (Bush), and buildings entirely. Deliberately does NOT touch the FarmHouse or Greenhouse -
+    /// neither is tracked in these containers at all (see BuildingEditor.NonInstancedIndoorsName
+    /// remarks: both are permanent, independent top-level &lt;GameLocation&gt; entries, not
+    /// something a &lt;Building&gt; element's removal here affects). A Barn/Coop/Shed's own
+    /// nested &lt;indoors&gt; sub-location (a child element of its own &lt;Building&gt;, not a
+    /// separate top-level &lt;locations&gt; entry) is removed automatically along with its
+    /// parent Building element here - no separate interior cleanup needed.</summary>
+    public void ClearAllContent()
+    {
+        _farmLocation.Element("terrainFeatures")?.RemoveNodes();
+        _farmLocation.Element("objects")?.RemoveNodes();
+        _farmLocation.Element("resourceClumps")?.RemoveNodes();
+        _farmLocation.Element("largeTerrainFeatures")?.RemoveNodes();
+        _farmLocation.Element("buildings")?.RemoveNodes();
+    }
 
     public void Move(TreeEditor tree, TilePosition newPosition) => tree.Move(newPosition);
     public void Move(GrassEditor grass, TilePosition newPosition) => grass.Move(newPosition);

@@ -23,7 +23,7 @@ namespace StardewTools.SaveEditor.MapAssets;
 /// </summary>
 public static class BuildingSprites
 {
-    private sealed record SpriteData(string Texture, Rect SourceRect, (int X, int Y) SeasonOffset, IReadOnlyDictionary<string, string> SkinTextures);
+    private sealed record SpriteData(string Texture, Rect SourceRect, (int X, int Y) SeasonOffset, (double X, double Y) DrawOffset, IReadOnlyDictionary<string, string> SkinTextures);
 
     private static readonly Dictionary<string, Bitmap?> BitmapCache = new();
     private static IReadOnlyDictionary<string, SpriteData>? _data;
@@ -104,6 +104,17 @@ public static class BuildingSprites
                     so.TryGetProperty("Y", out var sy) ? sy.GetInt32() : 0);
             }
 
+            // A compact "X, Y" string (confirmed real format via direct inspection - unlike
+            // SourceRect/SeasonOffset above, which are {X,Y} objects), not a JSON object - the
+            // same format Data/Buildings.json also uses for e.g. UpgradeSignTile.
+            var drawOffset = (0.0, 0.0);
+            if (el.TryGetProperty("DrawOffset", out var doEl) && doEl.ValueKind == JsonValueKind.String)
+            {
+                var parts = doEl.GetString()?.Split(',', StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
+                if (parts.Length == 2 && double.TryParse(parts[0], out var dx) && double.TryParse(parts[1], out var dy))
+                    drawOffset = (dx, dy);
+            }
+
             var skins = new Dictionary<string, string>();
             if (el.TryGetProperty("Skins", out var skinArray) && skinArray.ValueKind == JsonValueKind.Array)
             {
@@ -116,7 +127,7 @@ public static class BuildingSprites
                 }
             }
 
-            result[prop.Name] = new SpriteData(texture, sourceRect, seasonOffset, skins);
+            result[prop.Name] = new SpriteData(texture, sourceRect, seasonOffset, drawOffset, skins);
         }
 
         return result;
@@ -138,6 +149,18 @@ public static class BuildingSprites
     /// Bowl") - empty for the vast majority of buildings, which have none.</summary>
     public static IReadOnlyList<string> SkinsFor(string buildingType)
         => Data.TryGetValue(buildingType, out var data) ? data.SkinTextures.Keys.ToList() : Array.Empty<string>();
+
+    /// <summary>Real per-building sprite draw offset in native (16px/tile) units - e.g.
+    /// Farmhouse's real (-16, 2), confirmed via decompiled Building.draw(): "drawPosition +
+    /// drawOffset" where drawOffset = data.DrawOffset * 4f (the game's own fixed 4x building-art
+    /// scale). Most buildings are (0,0) (Stable included) - a building whose sprite is centered
+    /// differently than its logical tile footprint (Farmhouse's porch/door asymmetry) is the
+    /// exception, not the rule, but skipping this for every building meant anything placed flush
+    /// against one of these had a visible gap this tool never had (real user report: "in game you
+    /// can position the stable right next to the house and it lines up... there is a space
+    /// between them" in this tool).</summary>
+    public static (double X, double Y) DrawOffsetFor(string buildingType)
+        => Data.TryGetValue(buildingType, out var data) ? data.DrawOffset : (0.0, 0.0);
 
     public static bool TryGetSprite(string contentFolder, string buildingType, string? skinId, string season, out Bitmap bitmap, out Rect source)
     {
