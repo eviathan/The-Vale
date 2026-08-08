@@ -41,6 +41,15 @@ public sealed class FarmMapEditor
             .Select(e => new HoeDirtEditor(e.Position, e.Value))
             .ToList();
 
+    /// <summary>Floor/path tiles - confirmed against the decompiled Flooring class shape (see
+    /// FlooringEditor remarks; no real placed example exists in this project's sample saves to
+    /// verify field order/shape against directly, unlike Tree/HoeDirt/Bush).</summary>
+    public IReadOnlyList<FlooringEditor> Flooring
+        => DictionaryEntries("terrainFeatures")
+            .Where(e => (string?)e.Value.Attribute(XsiType) == "Flooring")
+            .Select(e => new FlooringEditor(e.Position, e.Value))
+            .ToList();
+
     /// <summary>
     /// terrainFeatures types present that we don't model yet. Surfaced here rather than
     /// silently dropped, so the map view can at least say "there's also N tiles of X here"
@@ -49,7 +58,7 @@ public sealed class FarmMapEditor
     public IReadOnlyList<(TilePosition Position, string Type)> UnmodeledTerrainFeatures
         => DictionaryEntries("terrainFeatures")
             .Select(e => (e.Position, Type: (string?)e.Value.Attribute(XsiType) ?? "Unknown"))
-            .Where(e => e.Type is not ("Tree" or "Grass" or "HoeDirt"))
+            .Where(e => e.Type is not ("Tree" or "Grass" or "HoeDirt" or "Flooring"))
             .ToList();
 
     public IReadOnlyList<ResourceClumpEditor> ResourceClumps
@@ -191,6 +200,41 @@ public sealed class FarmMapEditor
     public static bool IsExoticObjectId(int parentSheetIndex) => ExoticObjectCatalog.IsKnown(parentSheetIndex);
 
     public static bool IsAutoGrabberId(int parentSheetIndex) => parentSheetIndex == 165;
+
+    /// <summary>Real Data/Objects.json ids for the placeable floor/path items (Wood/Stone/
+    /// Weathered/Crystal/Straw/Brick/Rustic Plank Floor, Gravel/Wood/Crystal/Cobblestone/
+    /// Stepping Stone Path) - confirmed via decompiled Object.placementAction's IsFloorPathItem()
+    /// branch that these never become a plain placed Object at all; see AddFlooring.</summary>
+    public static bool IsFloorPathItemId(int parentSheetIndex) => FloorPathCatalog.IsKnown(parentSheetIndex);
+
+    /// <summary>
+    /// Places a floor/path tile - confirmed via the decompiled Object.placementAction's
+    /// IsFloorPathItem() branch: `location.terrainFeatures.Add(placementTile, new Flooring(key))`
+    /// where key is Data/FloorsAndPaths.json's own key for that item (FloorPathCatalog.Lookup),
+    /// not the item's own id. Lives in the same terrainFeatures tile dictionary as Tree/Grass/
+    /// HoeDirt, wrapped &lt;TerrainFeature xsi:type="Flooring"&gt; - matching that dictionary's
+    /// established shape here, not a per-type element name. whichView is only meaningful for
+    /// ConnectType.Random floor types (see FlooringEditor.WhichView) - always written as 0 here;
+    /// every other ConnectType derives its sprite from the live neighbor bitmask at render time
+    /// regardless of this value, so a fixed 0 costs nothing for those and only cosmetically
+    /// affects which of the 16 non-connecting variants a Random-type tile shows.
+    /// </summary>
+    public FlooringEditor AddFlooring(TilePosition position, int parentSheetIndex)
+    {
+        var container = TerrainFeaturesContainer();
+
+        var value = new XElement("TerrainFeature",
+            new XAttribute(XsiType, "Flooring"),
+            new XElement("whichFloor", FloorPathCatalog.Lookup(parentSheetIndex)),
+            new XElement("whichView", 0));
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new FlooringEditor(position, value);
+    }
 
     /// <summary>Auto-Grabber (165) stays a plain Object (no xsi:type override) but is
     /// non-functional without a `heldObject` Chest attached - confirmed via decompiled Object.cs
@@ -443,6 +487,7 @@ public sealed class FarmMapEditor
     public void Remove(PlacedObjectEditor placedObject) => placedObject.WrappingItem.Remove();
     public void Remove(BuildingEditor building) => building.Element.Remove();
     public void Remove(BushEditor bush) => bush.Element.Remove();
+    public void Remove(FlooringEditor flooring) => flooring.Item.Remove();
 
     public void Move(TreeEditor tree, TilePosition newPosition) => tree.Move(newPosition);
     public void Move(GrassEditor grass, TilePosition newPosition) => grass.Move(newPosition);

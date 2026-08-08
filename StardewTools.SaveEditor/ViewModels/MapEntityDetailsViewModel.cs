@@ -247,6 +247,12 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
     private readonly BuildingPaintColorEditor _paint;
     private readonly Action _onEdited;
 
+    /// <summary>Real, data-driven (Data/PaintData.json) check, computed once at selection time -
+    /// most building types (base Barn/Coop/Shed/Silo/Well/Greenhouse tiers, ...) have no paint
+    /// mask at all and are never paintable in the actual game either. Gates this panel in the UI
+    /// so it doesn't show live-looking HSL controls that silently do nothing for those types.</summary>
+    public bool CanBePainted { get; }
+
     [ObservableProperty] private bool _color1Default;
     [ObservableProperty] private int _color1Hue;
     [ObservableProperty] private int _color1Saturation;
@@ -260,10 +266,11 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
     [ObservableProperty] private int _color3Saturation;
     [ObservableProperty] private int _color3Lightness;
 
-    public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, Action onEdited)
+    public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, bool canBePainted, Action onEdited)
     {
         _paint = paint;
         _onEdited = onEdited;
+        CanBePainted = canBePainted;
         _color1Default = paint.Color1Default;
         _color1Hue = paint.Color1Hue;
         _color1Saturation = paint.Color1Saturation;
@@ -337,6 +344,12 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     public MapAssets.BuildingTierInfo? NextTier => MapAssets.BuildingsData.NextTier(Building.BuildingType);
     public bool CanUpgrade => NextTier is not null;
 
+    /// <summary>Real, data-driven (Data/PaintData.json) check - most building types, including
+    /// the base Barn/Coop/Shed/Silo/Well/Greenhouse tiers, have no paint mask at all and are
+    /// never paintable in the actual game either. Gates the paint-color panel in the UI so it
+    /// doesn't show live-looking HSL controls that silently do nothing for those types.</summary>
+    public bool CanBePainted { get; }
+
     public BuildingDetailsViewModel(MapEntitySummary summary, BuildingEditor building, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove,
         Action<string> enterLocation, Func<int> getHouseUpgradeLevel, Action<int> setHouseUpgradeLevel)
         : base(summary, onEdited, onRemove)
@@ -352,7 +365,8 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
         _magical = building.Magical;
         _animalDoorOpen = building.AnimalDoorOpen;
         _houseUpgradeLevel = getHouseUpgradeLevel();
-        PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, NotifyEdited);
+        CanBePainted = MapAssets.BuildingSprites.CanBePainted(building.BuildingType, building.SkinId);
+        PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, CanBePainted, NotifyEdited);
     }
 
     partial void OnSelectedSkinChanged(string value)
@@ -436,4 +450,23 @@ public sealed partial class BushDetailsViewModel : MapEntityDetailsViewModel
     partial void OnBloomReadyChanged(bool value) { Bush.TileSheetOffset = value ? 1 : 0; NotifyEdited(); }
 
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromBush(Bush);
+}
+
+public sealed partial class FlooringDetailsViewModel : MapEntityDetailsViewModel
+{
+    public FlooringEditor Flooring { get; }
+    public IReadOnlyList<MapAssets.FloorPathData> FloorTypes { get; } = MapAssets.FlooringSprites.Data.Values.OrderBy(d => d.Name).ToList();
+
+    [ObservableProperty] private MapAssets.FloorPathData _selectedFloorType;
+
+    public FlooringDetailsViewModel(MapEntitySummary summary, FlooringEditor flooring, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
+        : base(summary, onEdited, onRemove)
+    {
+        Flooring = flooring;
+        _selectedFloorType = MapAssets.FlooringSprites.Data.TryGetValue(flooring.WhichFloor, out var data) ? data : FloorTypes[0];
+    }
+
+    partial void OnSelectedFloorTypeChanged(MapAssets.FloorPathData value) { Flooring.WhichFloor = value.Key; NotifyEdited(); }
+
+    public override MapEntitySummary Resummarize() => MapEntitySummary.FromFlooring(Flooring);
 }

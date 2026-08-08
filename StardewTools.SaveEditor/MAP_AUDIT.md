@@ -6,6 +6,11 @@ explicitly called out as still-open in their own entries (1.5, 2.1's lower-prior
 the new **§5 Update log** and **§6 Out of scope** sections at the bottom for what changed and what
 this pass deliberately didn't attempt.
 
+Updated again 2026-08-08 — full placement/collision audit prompted by a real user report ("laying
+paths does not join up and laying paths does not allow me to place things on top"). Root cause
+found and fixed; see **§7** for the full writeup, including a still-open item (Fence, same bug
+class) found while cross-referencing the rest of the placement system.
+
 Scope: `StardewTools.SaveEditor/Controls/FarmMapControl.cs`, `StardewTools.SaveEditor/MapAssets/*`,
 `StardewTools.SaveEditor/ViewModels/MapTabViewModel.cs`, `StardewTools.Core/Models/*` (the Map
 tab's rendering, interaction, and save-XML-construction code).
@@ -436,3 +441,130 @@ not an oversight:
 
 None of these are silently dropped — they're recorded here specifically so the next pass at
 "anything you can do in game" doesn't have to rediscover the same scope boundary from scratch.
+
+---
+
+## 7. Update log — 2026-08-08 pass: Path/Flooring + placement collision model
+
+Triggered by a direct user report: "laying paths does not join up and laying paths does not allow
+me to place things on top." Investigated by reading the real game's own placement/collision code
+(`StardewValley/Object.cs`'s `placementAction`, `StardewValley/GameLocation.cs`'s
+`CanItemBePlacedHere`/`IsTileOccupiedBy`, `StardewValley.TerrainFeatures/Flooring.cs`) rather than
+guessing at a fix from symptoms.
+
+### 7.1 Root cause: Wood/Stone/Gravel/Crystal/Cobblestone/... Path and Floor items were never
+modeled as Flooring at all — HIGH — **FIXED**
+
+Every placeable floor/path item (`Data/Objects.json`'s Wood Floor/Stone Floor/Weathered Floor/
+Crystal Floor/Straw Floor/Brick Floor/Rustic Plank Floor/Stone Walkway Floor and Gravel/Wood/
+Crystal/Cobblestone/Stepping Stone Path — 13 real items total, ids 328/329/331/333/401/407/405/
+409/411/415/293/840/841) was going through the generic Object placement path
+(`FarmMapEditor.AddObject`), landing in the save's `objects` dictionary as an ordinary static
+sprite. Verified against the decompiled `Object.placementAction`
+(`StardewValley/Object.cs:6045-6058`) that this is **not what the real game does at all**:
+
+```csharp
+if (IsFloorPathItem())
+{
+    if (location.terrainFeatures.ContainsKey(placementTile))
+        return false;
+    string key = Flooring.GetFloorPathItemLookup()[base.ItemId];
+    location.terrainFeatures.Add(placementTile, new Flooring(key));
+    ...
+}
+```
+
+A floor/path item becomes a `Flooring` **terrain feature** (same `terrainFeatures` tile dictionary
+as Tree/Grass/HoeDirt), never a placed `Object`. This single wrong dictionary explains both halves
+of the report:
+
+- **"Doesn't join up"**: `Flooring.draw()`/`gatherNeighbors()` (`Flooring.cs:344-459`) compute a
+  live 8-direction neighbor bitmask against same-`whichFloor` *Flooring* neighbors and pick one of
+  16 sprite-sheet cells accordingly (`populateDrawGuide()`'s byte-mask → cell-index table) — a
+  straight run, a corner, a T-junction, and a fully-interior tile are all visually distinct cells.
+  A plain `Object` has no such concept; every placed path tile rendered as the exact same isolated
+  stamp regardless of what was next to it.
+- **"Doesn't allow placing things on top"**: `GameLocation.CanItemBePlacedHere` (`GameLocation.cs:
+  7103-7134`) → `IsTileOccupiedBy` (`GameLocation.cs:7155-7243`) treats `Flooring` as its own
+  `CollisionMask.Flooring` category, separate from `CollisionMask.TerrainFeatures` and from
+  `CollisionMask.Objects` — and `Flooring.isPassable()` always returns `true`
+  (`Flooring.cs:275-278`). The default `ignorePassables` mask excludes only `Objects`, so a
+  passable Flooring tile **never blocks placing a real Object on it**; that's exactly why real
+  players can put chests/scarecrows/torches/furniture on their decorative paths. Our tool had
+  placed paths as plain `Object`s, which — correctly, per the *Object* collision rule — always
+  block further placement on the same tile. The path itself was the thing making its own tile
+  unusable.
+
+**Fix** (full new entity kind, same rigor as §5.1's Bush addition):
+- `StardewTools.Core/Models/FlooringEditor.cs` (new) — `WhichFloor`/`WhichView` over
+  `<TerrainFeature xsi:type="Flooring">`. No real placed Flooring exists in any of this project's 4
+  sample saves to verify field order/shape against directly (unlike Tree/HoeDirt/Bush) — derived
+  from the decompiled `Flooring`/`TerrainFeature` NetField declarations instead, flagged in the
+  class doc comment at the same lower-confidence tier as `TreeEditor.TreeType`'s species mapping.
+- `StardewTools.Core/Serialization/FloorPathCatalog.cs` (new) — the real item-id → `Data/
+  FloorsAndPaths.json`-key mapping (confirmed by cross-reading both JSON files directly, not
+  guessed), mirroring `ExoticObjectCatalog`'s existing shape.
+- `FarmMapEditor.AddFlooring`/`.Flooring`/`Remove(FlooringEditor)`, `UnmodeledTerrainFeatures`
+  updated to stop flagging Flooring as unknown.
+- `StardewTools.SaveEditor/MapAssets/FlooringSprites.cs` (new) — `Data/FloorsAndPaths.json` reader
+  plus the neighbor-mask → sprite-cell table and the `Default`/`CornerDecorated` connect types'
+  extra inner-corner overlay pieces, both ported verbatim from `Flooring.cs` (not approximated).
+- `FarmMapControl.TryDrawFlooringSprite` — computes each tile's live neighbor bitmask against a
+  position→`WhichFloor` lookup rebuilt fresh every render pass (this is a stateless snapshot
+  renderer, not a live simulation like the real game's incremental
+  `OnNeighborAdded`/`OnNeighborRemoved`, so recomputing from scratch each frame is the correct
+  match here, not a shortcut).
+- `MapTabViewModel.PlaceObjectAt` now checks `FarmMapEditor.IsFloorPathItemId` first and redirects
+  to `AddFlooring` — same "intercept before the generic Object path" shape already used for Chest/
+  Auto-Grabber/exotic objects, just landing in a different save dictionary instead of a different
+  `xsi:type`.
+- **Collision model fix** (see §7.2 for the general finding this is a special case of): the Object
+  and Bush placement tools now exempt existing Flooring from their blocking check (place right
+  over a path, no confirmation needed), while Flooring-over-Flooring, Till/PlantCrop/PlantTree
+  (same `terrainFeatures` dictionary slot), and Building placement (conservative default — real
+  per-building `AllowsFlooringUnderneath` isn't modeled) are unchanged.
+- Verified via the render harness's new `--flooring-test`: places a real 3x3 Wood Path patch,
+  confirms all 9 placements succeed without a blocking prompt, confirms placing a Torch on the
+  center path tile succeeds with **both** entities coexisting at that position (not one replacing
+  the other), confirms placing a *second* path directly on an existing path tile **does** correctly
+  prompt (two terrain features can't share a tile), and visually inspected a cropped render showing
+  the 3x3 patch as a real connected shape (distinct straight/corner/interior cells) with a lit
+  torch sitting on the middle tile. `--paint-gating-test`-style coverage wasn't needed here since
+  the neighbor math has no per-building-type branching to gate.
+
+### 7.2 General finding: placement/removal treats every entity kind as a uniform blocker — the
+real game's collision model is per-category — MEDIUM (partially addressed)
+
+`MapTabViewModel`'s placement-blocking checks (`ApplyBrushTool`, `TryPlaceOrConfirm`,
+`OnMoveRequestChanged`) all reduce to the same rule: *any* existing entity overlapping the target
+tile(s) blocks placement and requires a "remove and place" confirmation, regardless of what kind of
+entity it is. The real game's actual rule (`GameLocation.CanItemBePlacedHere`/`IsTileOccupiedBy`,
+`GameLocation.cs:7103-7243`) is a `[Flags] CollisionMask` with independent categories — `Objects`
+always block; `TerrainFeatures`, `Flooring` (its own separate category, not folded into
+`TerrainFeatures`), `Characters`, and `Buildings` only block if the specific thing there is actually
+*not passable* (`Flooring` and bare `HoeDirt` are always passable; a young tree usually isn't).
+
+This pass fixed the one concrete, user-visible instance of the gap (Flooring never blocking Object/
+Bush placement — §7.1). The broader simplification — e.g. that our tool also blocks Object/Building
+placement on a passable *non-Flooring* terrain feature like bare tilled soil, where the real game's
+default collision mask would actually allow it — is **left as-is, not fixed**. Two reasons: (1) it's
+a strictly more *conservative* default (never permits a placement the real game would reject, only
+occasionally blocks-then-prompts where the real game would've allowed it silently), same "safe
+direction to be wrong in" judgment already made for building footprints in §3; (2) an editor
+UI benefits from an explicit "you're about to remove X" confirmation even in cases a live player
+action wouldn't need one, since the tool has no undo stack. Recorded here so a future pass
+considering "should placing an Object over bare HoeDirt need a confirmation" has the real game's
+actual rule on hand rather than re-deriving it.
+
+### 7.3 Fence still doesn't join up either — same bug class as 7.1, still open — MEDIUM
+
+Already flagged in §5.2 as a known, unfixed gap (Fence is placed with its real `xsi:type="Fence"`
+and fields via `ExoticObjectCatalog`, but with a plain static `Object` sprite, not the neighbor-
+aware connected rendering real fences use). Re-confirmed current with this pass: `FarmMapControl.cs`
+has no Fence-specific rendering code at all — fences fall through to the same generic
+`ObjectSprites.TryGetSprite` path as any other plain object, so a run of placed fence posts renders
+as disconnected identical stamps, exactly like paths did before §7.1's fix. Not fixed this pass
+(scope was the specific user report, which named paths, not fences) but worth calling out
+explicitly: it's the *same* underlying pattern (a real per-neighbor connectivity algorithm in the
+decompiled `Fence.cs` that this tool doesn't implement) and would likely follow the same fix shape
+as §7.1 if picked up next — see §5.2 for what's already confirmed about Fence's real field shape.

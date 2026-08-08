@@ -11,6 +11,7 @@ public enum MapEntityKind
     Object,
     Building,
     Bush,
+    Flooring,
 }
 
 /// <summary>
@@ -108,5 +109,14 @@ public sealed class MapEntitySummary
         Source = bush,
         Width = FootprintWidth(bush.Size),
         Height = 1,
+    };
+
+    public static MapEntitySummary FromFlooring(FlooringEditor flooring) => new()
+    {
+        Position = flooring.Position,
+        Kind = MapEntityKind.Flooring,
+        Label = MapAssets.FlooringSprites.Data.TryGetValue(flooring.WhichFloor, out var data) ? data.Name : $"Flooring (type {flooring.WhichFloor})",
+        ColorHex = "#A1887F",
+        Source = flooring,
     };
 }

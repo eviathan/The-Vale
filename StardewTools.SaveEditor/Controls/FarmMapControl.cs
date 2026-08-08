@@ -282,6 +282,15 @@ public sealed class FarmMapControl : Control
     /// arbitrary or size-based pick.</summary>
     private readonly List<MapEntitySummary> _entityDrawOrder = new();
 
+    /// <summary>Position -> WhichFloor for every placed Flooring tile, rebuilt fresh at the top
+    /// of every RenderRealMap pass - lets TryDrawFlooringSprite compute each tile's live 8-
+    /// direction neighbor bitmask in O(1) per direction instead of scanning all entities per
+    /// tile. Matches the real game's own "only same-WhichFloor Flooring neighbors connect" rule
+    /// (Flooring.gatherNeighbors()) - recomputed from scratch every render rather than
+    /// incrementally maintained (as the real game does via OnNeighborAdded/Removed) since this is
+    /// a stateless snapshot renderer, not a live simulation.</summary>
+    private readonly Dictionary<(int X, int Y), string> _flooringLookup = new();
+
     private TilePosition? _dragStartTile;
     private TilePosition? _dragCurrentTile;
     private bool _isDragging;
@@ -604,6 +613,13 @@ public sealed class FarmMapControl : Control
         var entitiesByRow = (Entities ?? Enumerable.Empty<MapEntitySummary>()).ToLookup(e => e.Position.Y + e.Height - 1);
         var allEntities = entitiesByRow.SelectMany(g => g).ToList();
 
+        _flooringLookup.Clear();
+        foreach (var e in allEntities)
+        {
+            if (e.Kind == MapEntityKind.Flooring && e.Source is FlooringEditor flooringSource)
+                _flooringLookup[(e.Position.X, e.Position.Y)] = flooringSource.WhichFloor;
+        }
+
         // Row-by-row interleaving approximates the game's Y-sorted draw order: a tall sprite
         // (like a tree canopy) drawn in its own row still visually overlaps rows above it
         // (already drawn), while anything in a row below draws over it in turn - so two trees
@@ -820,6 +836,14 @@ public sealed class FarmMapControl : Control
             && TryDrawBushSprite(context, bush, entity.Position, pixelOffsetX, pixelOffsetY, scale, out var bushBounds))
         {
             Record(bushBounds);
+            return;
+        }
+
+        if (entity.Kind == MapEntityKind.Flooring && entity.Source is FlooringEditor flooring
+            && !string.IsNullOrEmpty(ContentFolder)
+            && TryDrawFlooringSprite(context, flooring, entity.Position, pixelOffsetX, pixelOffsetY, scale, out var flooringBounds))
+        {
+            Record(flooringBounds);
             return;
         }
 
@@ -1044,6 +1068,74 @@ public sealed class FarmMapControl : Control
     }
 
     /// <summary>
+    /// Draws a floor/path tile with the real live 8-direction neighbor connectivity - verbatim
+    /// port of the decompiled Flooring.draw()/gatherNeighbors(): a same-WhichFloor Flooring tile
+    /// in each of the 8 surrounding positions sets that direction's bit in a byte mask; the 4
+    /// cardinal bits select the base 16x16 sprite cell (FlooringSprites.DrawGuide, e.g. "north
+    /// and south neighbor but no east/west" draws a vertical-run cell, "all 4 cardinals" draws a
+    /// fully-interior cell), and Default/CornerDecorated connect types additionally draw up to 4
+    /// small inner-corner pieces on top wherever the mask shows an actual inward corner (two
+    /// adjacent cardinals present, the diagonal between them absent). This - not anything
+    /// per-tile-type-specific - is what makes real paths/floors join into a connected shape
+    /// instead of rendering as 21 disconnected identical stamps.
+    /// </summary>
+    private bool TryDrawFlooringSprite(DrawingContext context, FlooringEditor flooring, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
+    {
+        if (!FlooringSprites.Data.TryGetValue(flooring.WhichFloor, out var data))
+        {
+            drawnBounds = default;
+            return false;
+        }
+
+        var useWinter = data.WinterTexture is not null && string.Equals(Season, "winter", StringComparison.OrdinalIgnoreCase);
+        var textureFile = useWinter ? data.WinterTexture! : data.Texture;
+        var corner = useWinter ? data.WinterCorner : data.Corner;
+        if (!FlooringSprites.TryGetBitmap(ContentFolder!, textureFile, out var bitmap))
+        {
+            drawnBounds = default;
+            return false;
+        }
+
+        byte neighborMask = 0;
+        foreach (var (dx, dy, bit) in FlooringSprites.NeighborOffsets)
+        {
+            if (_flooringLookup.TryGetValue((position.X + dx, position.Y + dy), out var neighborFloor) && neighborFloor == flooring.WhichFloor)
+                neighborMask |= bit;
+        }
+
+        var pixelsPerSourcePixel = scale / 16.0;
+        var tileLeft = pixelOffsetX + position.X * scale;
+        var tileTop = pixelOffsetY + position.Y * scale;
+
+        if (data.ShadowType == FloorPathShadowType.Square)
+        {
+            var shadowRect = new Rect(tileLeft - 4 * pixelsPerSourcePixel, tileTop + 4 * pixelsPerSourcePixel, scale, scale);
+            context.FillRectangle(new SolidColorBrush(Colors.Black, 0.33), shadowRect);
+        }
+        else if (data.ShadowType == FloorPathShadowType.Contoured)
+        {
+            var shadowSource = FlooringSprites.BaseSourceRect(data, corner, neighborMask, flooring.WhichView);
+            var shadowDest = new Rect(tileLeft - 4 * pixelsPerSourcePixel, tileTop + 4 * pixelsPerSourcePixel, scale, scale);
+            using (context.PushOpacity(0.33))
+                context.DrawImage(bitmap, shadowSource, shadowDest);
+        }
+
+        var baseSource = FlooringSprites.BaseSourceRect(data, corner, neighborMask, flooring.WhichView);
+        var baseDest = new Rect(tileLeft, tileTop, scale, scale);
+        context.DrawImage(bitmap, baseSource, baseDest);
+
+        foreach (var (overlaySource, destOffsetX, destOffsetY) in FlooringSprites.CornerOverlays(data, corner, neighborMask))
+        {
+            var overlayDest = new Rect(tileLeft + destOffsetX * pixelsPerSourcePixel, tileTop + destOffsetY * pixelsPerSourcePixel,
+                overlaySource.Width * pixelsPerSourcePixel, overlaySource.Height * pixelsPerSourcePixel);
+            context.DrawImage(bitmap, overlaySource, overlayDest);
+        }
+
+        drawnBounds = baseDest;
+        return true;
+    }
+
+    /// <summary>
     /// Draws a placed building's real sprite (Buildings/{BuildingType}.png - one full image
     /// per building, not a shared spritesheet) anchored at the bottom-center of its tile
     /// footprint, same reasoning as trees: building art extends upward from its base (walls +
@@ -1056,6 +1148,7 @@ public sealed class FarmMapControl : Control
 
         Bitmap bitmap;
         Rect source;
+        string? paintTextureFileName;
         if (building.BuildingType == "Farmhouse")
         {
             // The exterior varies by the player's house upgrade level (a Player field, not a
@@ -1068,11 +1161,29 @@ public sealed class FarmMapControl : Control
                 drawnBounds = default;
                 return false;
             }
+
+            // Real Building.GetPaintDataKey() maps buildingType "Farmhouse" -> Data/PaintData's
+            // "House" entry, which paints Buildings/houses.png (confirmed: houses_PaintMask.png
+            // is a real bundled asset) - the Farmhouse IS paintable in the real game, this was
+            // just missed the first time since it draws through FarmhouseSprite, not the generic
+            // BuildingSprites path the recolor branch below was originally added to.
+            paintTextureFileName = "houses";
         }
         else if (!BuildingSprites.TryGetSprite(ContentFolder!, building.BuildingType, building.SkinId, Season, out bitmap, out source))
         {
             drawnBounds = default;
             return false;
+        }
+        else
+        {
+            paintTextureFileName = BuildingSprites.TextureFileNameFor(building.BuildingType, building.SkinId);
+        }
+
+        var paint = building.PaintColor;
+        if (!(paint.Color1Default && paint.Color2Default && paint.Color3Default)
+            && BuildingPainter.TryGetPaintedBitmap(ContentFolder!, paintTextureFileName, bitmap, paint, out var painted))
+        {
+            bitmap = painted;
         }
 
         var pixelsPerSourcePixel = scale / 16.0;

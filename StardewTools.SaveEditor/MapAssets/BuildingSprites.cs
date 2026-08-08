@@ -27,8 +27,47 @@ public static class BuildingSprites
 
     private static readonly Dictionary<string, Bitmap?> BitmapCache = new();
     private static IReadOnlyDictionary<string, SpriteData>? _data;
+    private static IReadOnlySet<string>? _paintableKeys;
 
     private static IReadOnlyDictionary<string, SpriteData> Data => _data ??= Load();
+
+    /// <summary>Real, confirmed keys from Data/PaintData.json - only these building "paint data
+    /// keys" have an actual _PaintMask texture the game can recolor against (matches the
+    /// decompiled Building.GetPaintDataKey()/CanBePainted(): most building types, including the
+    /// base Barn/Coop/Shed/Silo/Well/Greenhouse/Slime Hutch tiers, simply have no paint data at
+    /// all - painting them is a real, intentional no-op in the actual game too, not something
+    /// this tool is missing).</summary>
+    private static IReadOnlySet<string> PaintableKeys => _paintableKeys ??= LoadPaintableKeys();
+
+    private static HashSet<string> LoadPaintableKeys()
+    {
+        var path = Path.Combine(BundledContent.FolderPath, "Data", "PaintData.json");
+        if (!File.Exists(path))
+            return new HashSet<string>();
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        return doc.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet();
+    }
+
+    /// <summary>Mirrors the decompiled Building.GetPaintDataKey(): a skin's own id is checked
+    /// first (a skin can be paintable even if the base building type generally isn't listed
+    /// under its own name), then the building type itself, with "Farmhouse" translated to
+    /// Data/PaintData.json's "House" entry (confirmed: PaintData has no literal "Farmhouse" key)
+    /// and "Cabin" (a generic/base cabin type, not one of this app's specific cabin skins) to
+    /// "Stone Cabin".</summary>
+    public static bool CanBePainted(string buildingType, string? skinId)
+    {
+        if (skinId is not null && PaintableKeys.Contains(skinId))
+            return true;
+
+        var lookupName = buildingType switch
+        {
+            "Farmhouse" => "House",
+            "Cabin" => "Stone Cabin",
+            _ => buildingType,
+        };
+        return PaintableKeys.Contains(lookupName);
+    }
 
     private static Dictionary<string, SpriteData> Load()
     {
@@ -130,6 +169,17 @@ public static class BuildingSprites
             data.SourceRect.Width,
             data.SourceRect.Height);
         return true;
+    }
+
+    /// <summary>The real texture file name a placed building draws from (accounting for its skin,
+    /// if any) - matches the game's own textureName() used to build a paint mask's path
+    /// ({textureName()}_PaintMask.png), which is the actual texture file, not the building's
+    /// catalog type name (only differs for skinned buildings, e.g. Pet Bowl).</summary>
+    public static string TextureFileNameFor(string buildingType, string? skinId)
+    {
+        if (!Data.TryGetValue(buildingType, out var data))
+            return buildingType;
+        return skinId is not null && data.SkinTextures.TryGetValue(skinId, out var skinTexture) ? skinTexture : data.Texture;
     }
 
     /// <summary>The raw, uncropped sheet for a building's default (non-skinned) texture file.

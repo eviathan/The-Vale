@@ -84,10 +84,14 @@ public sealed class TreeEditor
         set => _feature.SetChildBool("fertilized", value);
     }
 
+    /// <summary>Transient shake-animation state - confirmed via regression testing against a
+    /// real, well-progressed save to be genuinely absent from some trees' XML (same defensive
+    /// create-if-missing pattern as HasMoss/WasShakenToday below, not the throwing
+    /// GetChildBool/SetChildBool other, always-present tree fields use).</summary>
     public bool ShakeLeft
     {
-        get => _feature.GetChildBool("shakeLeft");
-        set => _feature.SetChildBool("shakeLeft", value);
+        get => _feature.TryGetChildBool("shakeLeft") ?? false;
+        set => _feature.SetChildBoolCreateIfMissing("shakeLeft", value);
     }
 
     /// <summary>Whether this tree has accumulated moss - a real, separately-tracked 1.6 field

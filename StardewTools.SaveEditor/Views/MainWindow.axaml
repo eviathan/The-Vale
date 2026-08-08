@@ -4,6 +4,7 @@
         xmlns:controls="using:StardewTools.SaveEditor.Controls"
         xmlns:conv="using:Avalonia.Data.Converters"
         xmlns:iconconv="using:StardewTools.SaveEditor.Converters"
+        xmlns:mapassets="using:StardewTools.SaveEditor.MapAssets"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="720"
@@ -765,7 +766,9 @@
                                                     <CheckBox Content="Animal door open" IsChecked="{Binding AnimalDoorOpen}"/>
 
                                                     <TextBlock Text="Paint color" FontWeight="Bold" Margin="0,6,0,0"/>
-                                                    <StackPanel Spacing="8" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel">
+                                                    <TextBlock Text="This building has no repaintable texture in the game's own files - painting is a no-op here just like in the real game (only Stable, cabins, Deluxe Barn/Coop, Big Shed and the Farmhouse can be repainted)."
+                                                               IsVisible="{Binding !CanBePainted}" Opacity="0.7" FontSize="11" TextWrapping="Wrap"/>
+                                                    <StackPanel Spacing="8" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel" IsVisible="{Binding CanBePainted}">
                                                         <StackPanel Spacing="2">
                                                             <CheckBox Content="Color 1: default" IsChecked="{Binding Color1Default}"/>
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color1Default}">
@@ -829,6 +832,22 @@
                                                     <CheckBox Content="Town bush (decorative)" IsChecked="{Binding TownBush}"/>
                                                     <CheckBox Content="Greenhouse/sheltered" IsChecked="{Binding GreenhouseBush}"/>
                                                     <CheckBox Content="Draw shadow" IsChecked="{Binding DrawShadow}"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:FlooringDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <StackPanel Classes="field">
+                                                        <TextBlock Text="Floor/path type"/>
+                                                        <ComboBox ItemsSource="{Binding FloorTypes}" SelectedItem="{Binding SelectedFloorType}" Width="180">
+                                                            <ComboBox.ItemTemplate>
+                                                                <DataTemplate DataType="mapassets:FloorPathData">
+                                                                    <TextBlock Text="{Binding Name}"/>
+                                                                </DataTemplate>
+                                                            </ComboBox.ItemTemplate>
+                                                        </ComboBox>
+                                                    </StackPanel>
+                                                    <TextBlock Text="Joins automatically with adjacent tiles of the same type, like the real game." Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                             </DataTemplate>
 

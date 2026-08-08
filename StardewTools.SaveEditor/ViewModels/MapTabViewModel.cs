@@ -356,6 +356,7 @@ public partial class MapTabViewModel : ViewModelBase
             { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity, EnterLocation, () => HouseUpgradeLevel, v => HouseUpgradeLevel = v),
             { Kind: MapEntityKind.Bush, Source: BushEditor bu } => new BushDetailsViewModel(value, bu, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Flooring, Source: FlooringEditor fl } => new FlooringDetailsViewModel(value, fl, OnEntityEdited, RemoveEntity),
             _ => null,
         };
     }
@@ -389,6 +390,7 @@ public partial class MapTabViewModel : ViewModelBase
             case PlacedObjectEditor obj: _map.Remove(obj); break;
             case BuildingEditor building: _map.Remove(building); break;
             case BushEditor bush: _map.Remove(bush); break;
+            case FlooringEditor flooring: _map.Remove(flooring); break;
         }
     }
 
@@ -452,6 +454,7 @@ public partial class MapTabViewModel : ViewModelBase
         foreach (var clump in map.ResourceClumps) entities.Add(MapEntitySummary.FromClump(clump));
         foreach (var obj in map.Objects) entities.Add(MapEntitySummary.FromObject(obj));
         foreach (var bush in map.Bushes) entities.Add(MapEntitySummary.FromBush(bush));
+        foreach (var flooring in map.Flooring) entities.Add(MapEntitySummary.FromFlooring(flooring));
         foreach (var building in map.Buildings) entities.Add(MapEntitySummary.FromBuilding(building));
         return entities;
     }
@@ -598,6 +601,25 @@ public partial class MapTabViewModel : ViewModelBase
         }
 
         PlacementBlockedMessage = null;
+
+        // Floor/path items (Wood Path, Cobblestone Path, ...) don't become a placed Object at
+        // all in the real game - they add a Flooring to terrainFeatures instead (confirmed via
+        // decompiled Object.placementAction's IsFloorPathItem() branch), which is what makes
+        // paths join up with their same-type neighbors and never block placing an object on top
+        // of them (Flooring is always passable and lives in a separate collision category - see
+        // MAP_AUDIT.md's Path/Flooring section). The generic Object path used to place these as
+        // an inert static-sprite Object, which is why paths never joined and always blocked
+        // further placement on the same tile.
+        if (FarmMapEditor.IsFloorPathItemId(item.Index))
+        {
+            var flooring = _map.AddFlooring(tile, item.Index);
+            var flooringSummary = MapEntitySummary.FromFlooring(flooring);
+            _farmEntitiesCache.Add(flooringSummary);
+            Entities.Add(flooringSummary);
+            Selected = flooringSummary;
+            return;
+        }
+
         // Chest-family (Chest/Stone/Junimo/Mini-Fridge/Mini-Shipping Bin/Hopper), Auto-Grabber,
         // and a further ~13 Object subclasses (Cask, Item Pedestal, Torch, Signs, Garden Pot,
         // Workbench, Mini-Jukebox, Wood Chipper, Telephone, Crab Pot, Fences) all need their own
@@ -744,8 +766,16 @@ public partial class MapTabViewModel : ViewModelBase
         switch (PlacementTool)
         {
             case PlacementTool.Object when SelectedPlaceableItem is { } item:
+                // A floor/path item placed on top of existing Flooring should still prompt
+                // (two terrain features can't share a tile - see FarmMapEditor.AddFlooring), but
+                // every other object should be placeable straight over existing Flooring without
+                // a confirmation - real Flooring is always passable and excluded from the game's
+                // default placement collision mask (GameLocation.CanItemBePlacedHere), which is
+                // exactly why real players can put chests/scarecrows/furniture on their paths.
                 ApplyBrushTool(tile, $"Place {item}", $"Can't place {item.Name} there - the game wouldn't allow an item there (water, no ground, or marked unplaceable).",
-                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null, applyAt: t => PlaceObjectAt(t, item));
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false),
+                    ignoreBlocking: FarmMapEditor.IsFloorPathItemId(item.Index) ? null : e => e.Kind == MapEntityKind.Flooring,
+                    applyAt: t => PlaceObjectAt(t, item));
                 break;
             case PlacementTool.Building when SelectedPlaceableBuilding is { } building:
                 if (!CanPlaceBuildingFootprint(tile, building))
@@ -783,7 +813,11 @@ public partial class MapTabViewModel : ViewModelBase
                     PlacementBlockedMessage = $"Can't plant a bush at ({tile.X}, {tile.Y}) - the game wouldn't allow one there.";
                     break;
                 }
-                TryPlaceOrConfirm(tile, bushWidth, 1, $"Plant {SelectedBushSize.Name} bush", () => PlantBushAt(tile, SelectedBushSize.Value));
+                // Bush is a LargeTerrainFeature, a real, separate collision category from
+                // Flooring (same "always passable, doesn't block real object placement" rule as
+                // the Object tool above) - see FarmMapEditor.AddFlooring's remarks.
+                TryPlaceOrConfirm(tile, bushWidth, 1, $"Plant {SelectedBushSize.Name} bush", () => PlantBushAt(tile, SelectedBushSize.Value),
+                    ignoreBlocking: e => e.Kind == MapEntityKind.Flooring);
                 break;
         }
     }
@@ -861,9 +895,15 @@ public partial class MapTabViewModel : ViewModelBase
 
         PlacementBlockedMessage = null;
         var moving = request.Moves.Select(m => m.Entity).ToHashSet();
+        // Existing Flooring only actually blocks a move that's itself a terrain feature (moving
+        // onto the same terrainFeatures dictionary slot) - a moved Object/Building/Bush should
+        // pass straight over it, same "Flooring never blocks real object placement" rule as the
+        // Object/Bush placement tools above (see FarmMapEditor.AddFlooring's remarks).
+        static bool IsTerrainFeatureKind(MapEntityKind kind) => kind is MapEntityKind.Tree or MapEntityKind.Grass or MapEntityKind.HoeDirt or MapEntityKind.Flooring;
         var blocking = Entities
             .Where(e => !moving.Contains(e))
-            .Where(e => request.Moves.Any(m => Overlaps(e, m.NewPosition, m.Entity.Width, m.Entity.Height)))
+            .Where(e => request.Moves.Any(m => Overlaps(e, m.NewPosition, m.Entity.Width, m.Entity.Height)
+                && (e.Kind != MapEntityKind.Flooring || IsTerrainFeatureKind(m.Entity.Kind))))
             .Distinct()
             .ToList();
 
@@ -926,14 +966,16 @@ public partial class MapTabViewModel : ViewModelBase
         PlacedObjectEditor o => MapEntitySummary.FromObject(o),
         BuildingEditor b => MapEntitySummary.FromBuilding(b),
         BushEditor bu => MapEntitySummary.FromBush(bu),
+        FlooringEditor fl => MapEntitySummary.FromFlooring(fl),
         _ => throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}."),
     };
 
-    private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place, MapEntitySummary? exclude = null)
+    private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place, MapEntitySummary? exclude = null, Func<MapEntitySummary, bool>? ignoreBlocking = null)
     {
         var blocking = Entities
             .Where(e => !ReferenceEquals(e, exclude))
             .Where(e => Overlaps(e, tile, width, height))
+            .Where(e => ignoreBlocking is null || !ignoreBlocking(e))
             .ToList();
 
         if (blocking.Count == 0)
