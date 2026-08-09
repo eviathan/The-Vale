@@ -39,14 +39,69 @@ public static class BuildingSprites
     /// this tool is missing).</summary>
     private static IReadOnlySet<string> PaintableKeys => _paintableKeys ??= LoadPaintableKeys();
 
-    private static HashSet<string> LoadPaintableKeys()
+    private static HashSet<string> LoadPaintableKeys() => PaintDataRaw.Keys.ToHashSet();
+
+    private static IReadOnlyDictionary<string, string>? _paintDataRaw;
+
+    /// <summary>Every Data/PaintData.json entry's raw value string, unparsed - each one isn't just
+    /// a "this building is paintable" marker, it's real per-region brightness-range data (see
+    /// LightnessRangesFor).</summary>
+    private static IReadOnlyDictionary<string, string> PaintDataRaw => _paintDataRaw ??= LoadPaintDataRaw();
+
+    private static Dictionary<string, string> LoadPaintDataRaw()
     {
         var path = Path.Combine(BundledContent.FolderPath, "Data", "PaintData.json");
         if (!File.Exists(path))
-            return new HashSet<string>();
+            return new Dictionary<string, string>();
 
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        return doc.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet();
+        return doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+    }
+
+    /// <summary>Real per-slot Lightness bounds for a paintable building/skin - decompiled
+    /// BuildingPaintMenu.LoadRegionData()'s own "RegionId/min max/RegionId/min max/RegionId/min
+    /// max" string format (e.g. Stable's "Building/-20 5/Roof/-25 0/Trim/-15 0"), ported verbatim.
+    /// Region order is Building/Roof/Trim, matching the real slider UI's region index 0/1/2, which
+    /// is what Color1/Color2/Color3 are keyed to (BuildingPaintMenu.SetRegion reads
+    /// colorTarget.Color{region+1}Hue et al.). A real, confirmed gap found via user report: this
+    /// tool's Lightness sliders previously allowed the full -100..100 range regardless of building
+    /// type, but the real ranges are much narrower and usually skewed negative (e.g. Big Shed's
+    /// "Building" slot never exceeds -10) - a value picked outside the real range is one the
+    /// in-game paint menu could never actually produce. Returns null for a non-paintable building/
+    /// skin (mirrors CanBePainted's own lookup) or unparseable data.</summary>
+    public static ((int Min, int Max) Color1, (int Min, int Max) Color2, (int Min, int Max) Color3)? LightnessRangesFor(string buildingType, string? skinId)
+    {
+        string? lookupName = null;
+        if (skinId is not null && PaintDataRaw.ContainsKey(skinId))
+        {
+            lookupName = skinId;
+        }
+        else
+        {
+            var candidate = buildingType switch
+            {
+                "Farmhouse" => "House",
+                "Cabin" => "Stone Cabin",
+                _ => buildingType,
+            };
+            if (PaintDataRaw.ContainsKey(candidate))
+                lookupName = candidate;
+        }
+
+        if (lookupName is null || !PaintDataRaw.TryGetValue(lookupName, out var raw))
+            return null;
+
+        var parts = raw.Replace("\n", "").Replace("\t", "").Split('/');
+        var ranges = new List<(int Min, int Max)>();
+        for (var i = 0; i + 1 < parts.Length; i += 2)
+        {
+            var brightness = parts[i + 1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            ranges.Add(brightness.Length >= 2 && int.TryParse(brightness[0], out var min) && int.TryParse(brightness[1], out var max)
+                ? (min, max)
+                : (-100, 100));
+        }
+
+        return ranges.Count == 3 ? (ranges[0], ranges[1], ranges[2]) : null;
     }
 
     /// <summary>Mirrors the decompiled Building.GetPaintDataKey(): a skin's own id is checked

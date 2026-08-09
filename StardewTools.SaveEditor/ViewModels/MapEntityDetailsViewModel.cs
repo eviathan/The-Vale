@@ -296,20 +296,39 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
 
     [ObservableProperty] private string _newStyleName = "";
 
-    public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, bool canBePainted, Action onEdited)
+    /// <summary>Real per-slot Lightness bounds (see BuildingSprites.LightnessRangesFor) - the
+    /// sliders bind Minimum/Maximum to these instead of a flat -100..100, since the real in-game
+    /// paint menu's own range is per-building and usually much narrower (and often skewed
+    /// negative) than that. Defaults to the old flat range if this building/skin isn't in
+    /// Data/PaintData.json (shouldn't happen when CanBePainted is true, but keeps the sliders
+    /// usable rather than stuck at 0..0 if the lookup ever misses).</summary>
+    public int Color1LightnessMin { get; }
+    public int Color1LightnessMax { get; }
+    public int Color2LightnessMin { get; }
+    public int Color2LightnessMax { get; }
+    public int Color3LightnessMin { get; }
+    public int Color3LightnessMax { get; }
+
+    public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, bool canBePainted, Action onEdited, string buildingType, string? skinId)
     {
         _paint = paint;
         _onEdited = onEdited;
         CanBePainted = canBePainted;
+
+        var ranges = BuildingSprites.LightnessRangesFor(buildingType, skinId);
+        (Color1LightnessMin, Color1LightnessMax) = ranges?.Color1 ?? (-100, 100);
+        (Color2LightnessMin, Color2LightnessMax) = ranges?.Color2 ?? (-100, 100);
+        (Color3LightnessMin, Color3LightnessMax) = ranges?.Color3 ?? (-100, 100);
+
         _color1Default = paint.Color1Default;
         _color1 = PreviewColor(paint.Color1Hue, paint.Color1Saturation);
-        _color1Lightness = paint.Color1Lightness;
+        _color1Lightness = Math.Clamp(paint.Color1Lightness, Color1LightnessMin, Color1LightnessMax);
         _color2Default = paint.Color2Default;
         _color2 = PreviewColor(paint.Color2Hue, paint.Color2Saturation);
-        _color2Lightness = paint.Color2Lightness;
+        _color2Lightness = Math.Clamp(paint.Color2Lightness, Color2LightnessMin, Color2LightnessMax);
         _color3Default = paint.Color3Default;
         _color3 = PreviewColor(paint.Color3Hue, paint.Color3Saturation);
-        _color3Lightness = paint.Color3Lightness;
+        _color3Lightness = Math.Clamp(paint.Color3Lightness, Color3LightnessMin, Color3LightnessMax);
         _isBound = true;
     }
 
@@ -374,7 +393,11 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasSavedStyles));
     }
 
-    /// <summary>Applies every field from a saved style onto this paint job in one shot.</summary>
+    /// <summary>Applies every field from a saved style onto this paint job in one shot. Lightness
+    /// is clamped to THIS building's own real range (see Color1LightnessMin/Max remarks) - a style
+    /// saved from one building type can carry a Lightness the target building's real in-game paint
+    /// menu could never reach (each building has its own much narrower range), so applying it
+    /// as-is would silently write another already-invalid value.</summary>
     [RelayCommand]
     private void ApplyStyle(SavedPaintStyle style)
     {
@@ -382,19 +405,19 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
         Color1 = PreviewColor(style.Color1Hue, style.Color1Saturation);
         _paint.Color1Hue = style.Color1Hue;
         _paint.Color1Saturation = style.Color1Saturation;
-        Color1Lightness = style.Color1Lightness;
+        Color1Lightness = Math.Clamp(style.Color1Lightness, Color1LightnessMin, Color1LightnessMax);
 
         Color2Default = style.Color2Default;
         Color2 = PreviewColor(style.Color2Hue, style.Color2Saturation);
         _paint.Color2Hue = style.Color2Hue;
         _paint.Color2Saturation = style.Color2Saturation;
-        Color2Lightness = style.Color2Lightness;
+        Color2Lightness = Math.Clamp(style.Color2Lightness, Color2LightnessMin, Color2LightnessMax);
 
         Color3Default = style.Color3Default;
         Color3 = PreviewColor(style.Color3Hue, style.Color3Saturation);
         _paint.Color3Hue = style.Color3Hue;
         _paint.Color3Saturation = style.Color3Saturation;
-        Color3Lightness = style.Color3Lightness;
+        Color3Lightness = Math.Clamp(style.Color3Lightness, Color3LightnessMin, Color3LightnessMax);
 
         _onEdited();
     }
@@ -478,7 +501,7 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
         _animalDoorOpen = building.AnimalDoorOpen;
         _houseUpgradeLevel = GameEnums.FindOrFirst(GameEnums.HouseUpgradeLevels, getHouseUpgradeLevel());
         CanBePainted = MapAssets.BuildingSprites.CanBePainted(building.BuildingType, building.SkinId);
-        PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, CanBePainted, NotifyEdited);
+        PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, CanBePainted, NotifyEdited, building.BuildingType, building.SkinId);
     }
 
     partial void OnSelectedSkinChanged(string value)

@@ -1,17 +1,21 @@
 using System.Xml.Linq;
-using StardewTools.Core.Serialization;
 
 namespace StardewTools.Core.Models;
 
 /// <summary>
-/// A building's custom paint job (the paint-bucket tool's 3 color slots) - real, confirmed
-/// nested &lt;buildingPaintColor&gt; element, every field verbatim from a real Greenhouse. Each
-/// slot has a "use the building's default color" flag plus its own HSL triple; the *Default
-/// flags are true (and hue/saturation/lightness all 0) on every real building checked, since
-/// none of the 4 local saves has an actually-repainted building to verify non-default values
-/// against. The valid numeric range for Hue/Saturation/Lightness isn't confirmed either (the
-/// decompiled BuildingPaintColor class shows no clamp) - callers should not assume a specific
-/// max without further verification.
+/// A building's custom paint job (the paint-bucket tool's 3 color slots) - real, confirmed nested
+/// &lt;buildingPaintColor&gt; element. Each slot has a "use the building's default color" flag
+/// plus its own HSL triple, but critically every one of those 12 fields is wrapped in its own
+/// type-tag child (&lt;Color1Default&gt;&lt;boolean&gt;false&lt;/boolean&gt;&lt;/Color1Default&gt;,
+/// &lt;Color1Hue&gt;&lt;int&gt;59&lt;/int&gt;&lt;/Color1Hue&gt;, ...) - NOT a bare value directly
+/// inside the named element the way most other bool/int fields in this codebase work. Confirmed
+/// against a real building painted through the actual in-game Carpenter's Menu (not guessed): a
+/// real, reported bug - this class previously wrote/read the bare-value shape, which the game's
+/// own deserializer can't parse as valid paint data, so it silently fell back to "default, no
+/// paint" for every building this tool ever painted, in every save, the whole time. Valid numeric
+/// ranges for Hue/Saturation/Lightness are also real and per-building/per-slot, not a universal
+/// -100..100 - see BuildingSprites.LightnessRangesFor (SaveEditor layer) for the real values,
+/// parsed from Data/PaintData.json.
 /// </summary>
 public sealed class BuildingPaintColorEditor
 {
@@ -30,10 +34,10 @@ public sealed class BuildingPaintColorEditor
             new XElement("ColorName", new XElement("string", new XAttribute(XName.Get("nil", "http://www.w3.org/2001/XMLSchema-instance"), "true"))));
         foreach (var slot in new[] { "Color1", "Color2", "Color3" })
         {
-            el.Add(new XElement(slot + "Default", true));
-            el.Add(new XElement(slot + "Hue", 0));
-            el.Add(new XElement(slot + "Saturation", 0));
-            el.Add(new XElement(slot + "Lightness", 0));
+            el.Add(new XElement(slot + "Default", new XElement("boolean", true)));
+            el.Add(new XElement(slot + "Hue", new XElement("int", 0)));
+            el.Add(new XElement(slot + "Saturation", new XElement("int", 0)));
+            el.Add(new XElement(slot + "Lightness", new XElement("int", 0)));
         }
 
         return el;
@@ -54,8 +58,70 @@ public sealed class BuildingPaintColorEditor
     public int Color3Saturation { get => GetInt("Color3Saturation"); set => SetInt("Color3Saturation", value); }
     public int Color3Lightness { get => GetInt("Color3Lightness"); set => SetInt("Color3Lightness", value); }
 
-    private bool GetBool(string name) => _element.TryGetChildBool(name) ?? true;
-    private void SetBool(string name, bool value) => _element.SetChildBoolCreateIfMissing(name, value);
-    private int GetInt(string name) => _element.TryGetChildInt(name) ?? 0;
-    private void SetInt(string name, int value) => _element.SetChildIntCreateIfMissing(name, value);
+    /// <summary>Reads a Color{N}Default/Hue/Saturation/Lightness field, tolerating BOTH the real
+    /// wrapped shape (&lt;Color1Hue&gt;&lt;int&gt;59&lt;/int&gt;&lt;/Color1Hue&gt;) and the old
+    /// bare-value shape this class used to write (so a save already touched by an earlier,
+    /// pre-fix version of this tool still reads back instead of throwing) - the bare form is
+    /// never written going forward, only tolerated on read.</summary>
+    private bool GetBool(string name)
+    {
+        var child = _element.Element(name);
+        if (child is null)
+            return true;
+
+        var inner = child.Element("boolean");
+        var text = inner?.Value ?? child.Value;
+        return string.IsNullOrEmpty(text) || bool.Parse(text);
+    }
+
+    private void SetBool(string name, bool value)
+    {
+        var child = _element.Element(name);
+        if (child is null)
+        {
+            child = new XElement(name);
+            _element.Add(child);
+        }
+
+        var inner = child.Element("boolean");
+        if (inner is null)
+        {
+            child.RemoveNodes();
+            inner = new XElement("boolean");
+            child.Add(inner);
+        }
+
+        inner.Value = value ? "true" : "false";
+    }
+
+    private int GetInt(string name)
+    {
+        var child = _element.Element(name);
+        if (child is null)
+            return 0;
+
+        var inner = child.Element("int");
+        var text = inner?.Value ?? child.Value;
+        return string.IsNullOrEmpty(text) ? 0 : int.Parse(text);
+    }
+
+    private void SetInt(string name, int value)
+    {
+        var child = _element.Element(name);
+        if (child is null)
+        {
+            child = new XElement(name);
+            _element.Add(child);
+        }
+
+        var inner = child.Element("int");
+        if (inner is null)
+        {
+            child.RemoveNodes();
+            inner = new XElement("int");
+            child.Add(inner);
+        }
+
+        inner.Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
 }

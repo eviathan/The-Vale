@@ -91,4 +91,24 @@ public static class AreaOfEffect
         }
         return tiles;
     }
+
+    /// <summary>Junimo Hut's real crop-harvest area - decompiled JunimoHut.
+    /// areThereMatureCropsWithinRadius()'s own loop bounds: `tileX+1-radius .. tileX+1+radius`
+    /// (inclusive), same for Y - a plain square like a sprinkler, not a circle like a scarecrow,
+    /// but centered one tile in from the hut's own top-left anchor (tileX+1, tileY+1), not on the
+    /// anchor itself - offsets below are relative to that same top-left anchor (MapEntitySummary.
+    /// Position for a placed Building), matching what FarmMapControl already uses for the object
+    /// AOE cases. cropHarvestRadius is a real, constant field (8), not building-data-driven.</summary>
+    public static IReadOnlyList<(int Dx, int Dy)>? TilesForBuilding(string buildingType)
+    {
+        if (buildingType != "Junimo Hut")
+            return null;
+
+        const int radius = 8;
+        var tiles = new List<(int, int)>();
+        for (var dx = 1 - radius; dx <= 1 + radius; dx++)
+            for (var dy = 1 - radius; dy <= 1 + radius; dy++)
+                tiles.Add((dx, dy));
+        return tiles;
+    }
 }

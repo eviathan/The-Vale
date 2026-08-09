@@ -158,15 +158,17 @@ public partial class MapTabViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(HoverAoeTiles))]
     private PlaceableItem? _selectedPlaceableItem;
 
-    /// <summary>#9: the real coverage area (dx,dy tile offsets) SelectedPlaceableItem would have
-    /// once placed - null for anything without a known AOE (AreaOfEffect remarks), or when the
-    /// Object tool isn't even active. FarmMapControl draws this under the cursor's hovered tile
-    /// before you click, the same way HoverFootprintWidth/Height already preview a building's
-    /// footprint before placement.</summary>
+    /// <summary>#9: the real coverage area (dx,dy tile offsets) SelectedPlaceableItem/
+    /// SelectedPlaceableBuilding would have once placed - null for anything without a known AOE
+    /// (AreaOfEffect remarks), or when neither the Object nor Building tool is active.
+    /// FarmMapControl draws this under the cursor's hovered tile before you click, the same way
+    /// HoverFootprintWidth/Height already preview a building's footprint before placement.</summary>
     public IReadOnlyList<(int Dx, int Dy)>? HoverAoeTiles
         => IsObjectToolActive && SelectedPlaceableItem is { } item
             ? AreaOfEffect.TilesFor(item.IsBigCraftable, item.RealItemId, item.Name)
-            : null;
+            : PlacementTool == PlacementTool.Building && SelectedPlaceableBuilding is { } building
+                ? AreaOfEffect.TilesForBuilding(building.Name)
+                : null;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
@@ -379,6 +381,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(HoverFootprintWidth));
         OnPropertyChanged(nameof(HoverFootprintHeight));
+        OnPropertyChanged(nameof(HoverAoeTiles));
     }
 
     partial void OnSelectedFurnitureChanged(PlaceableFurniture? value)
@@ -593,7 +596,20 @@ public partial class MapTabViewModel : ViewModelBase
     /// <summary>Own, render-independent parse of the current location's map, used only to check
     /// real placement rules (CanPlaceFootprint) - best-effort, same as FarmMapControl's own
     /// loader: a missing/unreadable map just means placement checks are skipped (CanPlaceFootprint
-    /// returns true, i.e. no restriction) rather than blocking the whole tab.</summary>
+    /// returns true, i.e. no restriction) rather than blocking the whole tab.
+    ///
+    /// FarmHouse's real collision/placement tile boundaries come from a DIFFERENT .tmx per house
+    /// upgrade level (see FarmHouseMapFileNameFor) - the same underlying issue
+    /// FarmHouseMapFileName already exists to solve, but that property only ever fed the map's own
+    /// art/tile rendering (FarmMapControl), never this ViewModel's own separate collision map used
+    /// by CanPlaceFootprint. Real, confirmed user report: the rendered floorplan correctly showed
+    /// the upgraded house (FarmHouseMapFileName was already right), but every placement attempt in
+    /// the new rooms was rejected as "not allowed" because the collision map was still loading the
+    /// level-0 "FarmHouse.tmx" - the FarmHouse *location*'s name never changes with upgrade level,
+    /// only its map file does, so passing the raw location name through unconditionally (as this
+    /// method used to) always loaded the wrong file for any upgraded house. MapArtLocationName
+    /// itself is deliberately left as the raw name - FarmMapControl's own LocationName == "FarmHouse"
+    /// checks depend on it staying that way; only the internal collision-map load is resolved.</summary>
     private void TryLoadTmxMap(string mapName)
     {
         MapArtLocationName = mapName;
@@ -601,11 +617,13 @@ public partial class MapTabViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(ContentFolder))
             return;
 
+        var collisionMapName = mapName == "FarmHouse" ? FarmHouseMapFileNameFor(HouseUpgradeLevel) : mapName;
+
         try
         {
             var loader = new MapAssetLoader(ContentFolder);
-            if (loader.HasMap(mapName))
-                _tmxMap = loader.LoadMap(mapName);
+            if (loader.HasMap(collisionMapName))
+                _tmxMap = loader.LoadMap(collisionMapName);
         }
         catch
         {
@@ -1236,6 +1254,13 @@ public partial class MapTabViewModel : ViewModelBase
                 RefreshCurrentLocationEntities();
         }
         FarmHouseMapFileName = FarmHouseMapFileNameFor(value);
+
+        // TryLoadTmxMap's own collision-map resolution reads HouseUpgradeLevel (this property)
+        // live, so changing the level while already viewing the FarmHouse needs a fresh reload -
+        // otherwise CanPlaceFootprint would keep enforcing whichever level's floorplan was loaded
+        // when the player first entered, not the new one.
+        if (SelectedLocationName == "FarmHouse")
+            TryLoadTmxMap("FarmHouse");
     }
 
     /// <summary>Rebuilds Entities/_farmEntitiesCache from _map and clears Selected - needed

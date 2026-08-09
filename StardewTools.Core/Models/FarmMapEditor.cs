@@ -636,6 +636,61 @@ public sealed class FarmMapEditor
     /// placeholder values below is safe for every building type, not just the ones already
     /// placeable before this change.
     /// </summary>
+    /// <summary>The handful of building types whose Data/Buildings.json entry names a real C#
+    /// subclass (its own "BuildingType" field, e.g. "StardewValley.Buildings.JunimoHut") instead
+    /// of the generic base Building class - verified exhaustively against every entry in
+    /// Data/Buildings.json (every other type, including Barn/Coop/Shed/Silo/Mill/Well/obelisks/
+    /// Deluxe tiers, has no BuildingType override and is correctly a plain Building). Building.cs
+    /// registers each of these via [XmlInclude], so `xsi:type` is how the save format picks the
+    /// real subclass on load - a real, confirmed bug found via user report: without this, a
+    /// placed Junimo Hut never became a real JunimoHut instance, so its own draw() override (which
+    /// crops to just the current season's 48x64 frame) never ran - the generic Building draw path
+    /// took over instead, using Data/Buildings.json's SourceRect for Junimo Hut (the (0,0,0,0)
+    /// "whole texture" sentinel) and rendering the entire 256x64 sheet - all 4 seasonal frames at
+    /// once - as one image, and also skipped every bit of real gameplay behavior tied to the
+    /// subclass (Junimo harvesting, the Greenhouse's unlock state, Shipping Bin's UI, ...).</summary>
+    private static readonly System.Collections.Generic.Dictionary<string, string> BuildingXsiTypes = new()
+    {
+        ["Junimo Hut"] = "JunimoHut",
+        ["Fish Pond"] = "FishPond",
+        ["Pet Bowl"] = "PetBowl",
+        ["Stable"] = "Stable",
+        ["Shipping Bin"] = "ShippingBin",
+        ["Greenhouse"] = "GreenhouseBuilding",
+    };
+
+    /// <summary>Adds the missing xsi:type to any existing Building that needs one (see
+    /// BuildingXsiTypes remarks) - called automatically on every load (see SaveGameEditor's
+    /// constructor) so this self-heals every time a save passes through this tool, rather than
+    /// needing a one-off manual patch: the real game's own save-writer doesn't write xsi:type back
+    /// out for these types even after correctly reading it in and using the real subclass for a
+    /// whole session (confirmed via user report - the fix "worked" for one play session, then the
+    /// very next save had silently dropped it again), so a save that's ever round-tripped through
+    /// vanilla gameplay will keep losing this attribute no matter how many times it's added by
+    /// hand. Idempotent and safe to call on an already-correct save (does nothing).</summary>
+    public int RepairBuildingSubtypes()
+    {
+        var repaired = 0;
+        foreach (var element in _farmLocation.Element("buildings")?.Elements("Building") ?? Enumerable.Empty<XElement>())
+        {
+            var buildingType = element.Element("buildingType")?.Value;
+            if (buildingType is null || !BuildingXsiTypes.TryGetValue(buildingType, out var xsiTypeName))
+                continue;
+
+            var existing = element.Attribute(XsiType);
+            if (existing?.Value == xsiTypeName)
+                continue;
+
+            if (existing is null)
+                element.Add(new XAttribute(XsiType, xsiTypeName));
+            else
+                existing.Value = xsiTypeName;
+            repaired++;
+        }
+
+        return repaired;
+    }
+
     public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical, int hayCapacity = 0,
         string? indoorMap = null, int animalLimit = 0)
     {
@@ -647,6 +702,7 @@ public sealed class FarmMapEditor
         }
 
         var element = new XElement("Building",
+            BuildingXsiTypes.TryGetValue(buildingType, out var xsiTypeName) ? new XAttribute(XsiType, xsiTypeName) : null,
             new XElement("id", Guid.NewGuid().ToString()),
             new XElement("tileX", position.X),
             new XElement("tileY", position.Y),

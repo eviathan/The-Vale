@@ -31,6 +31,12 @@ public sealed class SaveGameEditor
             .FirstOrDefault(e => (string?)e.Attribute(XsiType) == "Farm")
             ?? throw new InvalidDataException("Save file has no Farm GameLocation.");
         Map = new FarmMapEditor(farmLocation);
+
+        // Self-heals the real game's own habit of dropping xsi:type from Building elements that
+        // need it (Junimo Hut/Stable/...) on every save - see FarmMapEditor.RepairBuildingSubtypes
+        // remarks. Runs on every load so a save round-tripped through vanilla gameplay between
+        // visits to this tool keeps getting fixed automatically, not just once.
+        Map.RepairBuildingSubtypes();
     }
 
     /// <summary>The underlying raw document - exposed for undo/redo (StardewTools.SaveEditor.

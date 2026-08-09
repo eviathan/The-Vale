@@ -489,6 +489,7 @@ public sealed class FarmMapControl : Control
     private TilePosition? _shapeStartTile;
     private bool _needsViewCentering;
     private bool _spaceHeld;
+    private bool _shiftHeld;
     private Point? _panStartPoint;
     private (double X, double Y)? _panStartOffset;
     private Point? _lastPointerPosition;
@@ -542,7 +543,7 @@ public sealed class FarmMapControl : Control
             return;
         }
 
-        if (_lastPointerPosition is { } position && _lastLayout is { } layout && FindEntityAt(position, layout) is not null)
+        if (!_shiftHeld && _lastPointerPosition is { } position && _lastLayout is { } layout && FindEntityAt(position, layout) is not null)
         {
             Cursor = new Cursor(StandardCursorType.Hand);
             return;
@@ -1013,15 +1014,18 @@ public sealed class FarmMapControl : Control
         }
     }
 
-    /// <summary>#9: shows a placed sprinkler/scarecrow's real coverage area when it's the current
-    /// Selected entity - lets you check an EXISTING placement's reach without needing to move it
-    /// or place a new one. See AreaOfEffect remarks for exactly which items this covers.</summary>
+    /// <summary>#9: shows a placed sprinkler/scarecrow/Junimo Hut's real coverage area when it's
+    /// the current Selected entity - lets you check an EXISTING placement's reach without needing
+    /// to move it or place a new one. See AreaOfEffect remarks for exactly which items/buildings
+    /// this covers.</summary>
     private static void DrawSelectedAoeOverlay(DrawingContext context, MapEntitySummary entity, double offsetX, double offsetY, double tileScale)
     {
-        if (entity.Kind != MapEntityKind.Object || entity.Source is not PlacedObjectEditor placed)
-            return;
-
-        var tiles = AreaOfEffect.TilesFor(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "", placed.Item.Name);
+        var tiles = (entity.Kind, entity.Source) switch
+        {
+            (MapEntityKind.Object, PlacedObjectEditor placed) => AreaOfEffect.TilesFor(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "", placed.Item.Name),
+            (MapEntityKind.Building, BuildingEditor building) => AreaOfEffect.TilesForBuilding(building.BuildingType),
+            _ => null,
+        };
         if (tiles is null)
             return;
 
@@ -1366,13 +1370,22 @@ public sealed class FarmMapControl : Control
             if (dirt.Crop is { } crop
                 && CropSprites.TryGetSprite(ContentFolder, crop.RowInSpriteSheet, crop.CurrentPhase, crop.Dead, crop.FullGrown, crop.DayOfCurrentPhase, entity.Position.X, entity.Position.Y, out var cropBitmap, out var cropSource))
             {
-                // Anchor exactly like the real game (Crop.draw(): draw origin (8,24) in the
-                // 16x32 source, scale 4, positioned at the tile's top-left) - not bottom-anchored
-                // like a tree/bush, since a crop's "root" sits higher in its sprite than that.
+                // Anchor exactly like the real game (Crop.draw(): draw origin (8,24) in the 16x32
+                // source, scale 4) - not bottom-anchored like a tree/bush, since a crop's "root"
+                // sits higher in its sprite than that. Real, confirmed off-by-half-a-tile bug:
+                // decompiled Crop.cs's own drawPosition is `tileLocation*64 + 32` (the tile's
+                // CENTER, not its top-left corner - see the two drawPosition assignments in
+                // Crop.cs, both with a trailing "+ 32f" on each axis, ignoring the small per-tile
+                // jitter term also folded in there, which is cosmetic and not modeled here) - this
+                // was missing the +32 (half a tile) entirely, anchoring the origin subtraction
+                // from the tile's raw top-left instead, which visibly shifted every crop up and
+                // to the left of its real position.
                 var pixelsPerSourcePixel = scale / 16.0;
                 var cropWidth = cropSource.Width * pixelsPerSourcePixel;
                 var cropHeight = cropSource.Height * pixelsPerSourcePixel;
-                var cropRect = new Rect(dx - 8 * pixelsPerSourcePixel, dy - 24 * pixelsPerSourcePixel, cropWidth, cropHeight);
+                var cropCenterX = dx + scale / 2.0;
+                var cropCenterY = dy + scale / 2.0;
+                var cropRect = new Rect(cropCenterX - 8 * pixelsPerSourcePixel, cropCenterY - 24 * pixelsPerSourcePixel, cropWidth, cropHeight);
 
                 if (crop.Flip)
                 {
@@ -1949,8 +1962,12 @@ public sealed class FarmMapControl : Control
         // drag continues. Pressing on empty space always marquees even if the drag later
         // crosses over an entity; pressing on an entity always (potentially) moves it - the
         // whole SelectedRange together if the press landed on one of its members, that entity
-        // alone otherwise.
-        _dragEntity = FindEntityAt(e.GetPosition(this), layout);
+        // alone otherwise. Holding Shift overrides this and always marquees regardless of what's
+        // under the press - real, reported gap: with no override, a region the user wanted to
+        // multi-select (to bulk-edit/move/delete several entities at once) silently turned into a
+        // single-entity move instead the moment the drag happened to start on top of one of them,
+        // making it impossible to marquee any area that wasn't already completely empty.
+        _dragEntity = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? null : FindEntityAt(e.GetPosition(this), layout);
         _dragGroup = _dragEntity is { } hit && SelectedRange.Contains(hit) ? SelectedRange : null;
 
         e.Pointer.Capture(this);
@@ -2162,6 +2179,11 @@ public sealed class FarmMapControl : Control
             _spaceHeld = true;
             UpdateCursor();
         }
+        else if (e.Key is Key.LeftShift or Key.RightShift)
+        {
+            _shiftHeld = true;
+            UpdateCursor();
+        }
         else if (e.Key is Key.OemCloseBrackets or Key.OemPlus)
         {
             BrushSize = Math.Clamp(BrushSize + 1, 1, MapTabViewModel.MaxBrushSize);
@@ -2227,6 +2249,11 @@ public sealed class FarmMapControl : Control
         if (e.Key == Key.Space)
         {
             _spaceHeld = false;
+            UpdateCursor();
+        }
+        else if (e.Key is Key.LeftShift or Key.RightShift)
+        {
+            _shiftHeld = false;
             UpdateCursor();
         }
     }

@@ -741,6 +741,9 @@
                                         </ItemsControl>
                                     </StackPanel>
 
+                                    <TextBlock Text="Tip: hold Shift while dragging to select a range that includes objects (a plain drag starting on an object moves it instead)."
+                                               Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="Legend" FontWeight="Bold"/>
                                         <ItemsControl ItemsSource="{Binding EntityLegend}">
@@ -758,7 +761,7 @@
 
                                     <StackPanel Spacing="6" IsVisible="{Binding HasSelectedRange}">
                                         <TextBlock Text="{Binding SelectedRange.Count, StringFormat='Range selection ({0})'}" FontWeight="Bold"/>
-                                        <TextBlock Text="Click and drag on the map to select an area." Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
+                                        <TextBlock Text="Click and drag on the map to select an area. Hold Shift while dragging to select a range even if it starts on top of an object (a plain drag on an object moves it instead)." Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
                                         <Button Content="{Binding SelectedRange.Count, StringFormat='Collect Selected ({0})'}" Command="{Binding CollectRangeCommand}"/>
                                         <TextBlock Text="Removes each entity and adds its real yield (wood, ore, harvested crop, ...) to your inventory where one exists."
                                                    Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
@@ -1045,7 +1048,7 @@
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color1Default}">
                                                                 <ColorPicker Color="{Binding Color1}"/>
                                                                 <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
-                                                                <NumericUpDown Value="{Binding Color1Lightness}" Minimum="-100" Maximum="100" Width="80"/>
+                                                                <NumericUpDown Value="{Binding Color1Lightness}" Minimum="{Binding Color1LightnessMin}" Maximum="{Binding Color1LightnessMax}" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="2">
@@ -1053,7 +1056,7 @@
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color2Default}">
                                                                 <ColorPicker Color="{Binding Color2}"/>
                                                                 <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
-                                                                <NumericUpDown Value="{Binding Color2Lightness}" Minimum="-100" Maximum="100" Width="80"/>
+                                                                <NumericUpDown Value="{Binding Color2Lightness}" Minimum="{Binding Color2LightnessMin}" Maximum="{Binding Color2LightnessMax}" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="2">
@@ -1061,7 +1064,7 @@
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color3Default}">
                                                                 <ColorPicker Color="{Binding Color3}"/>
                                                                 <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
-                                                                <NumericUpDown Value="{Binding Color3Lightness}" Minimum="-100" Maximum="100" Width="80"/>
+                                                                <NumericUpDown Value="{Binding Color3Lightness}" Minimum="{Binding Color3LightnessMin}" Maximum="{Binding Color3LightnessMax}" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <TextBlock Text="Lightness is a brightness shift on the building's own shading, not a color - the swatch above previews Hue/Saturation only, at a fixed reference brightness."
