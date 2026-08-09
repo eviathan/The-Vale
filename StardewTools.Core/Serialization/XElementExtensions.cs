@@ -114,4 +114,45 @@ internal static class XElementExtensions
 
         child.Value = value.ToString(CultureInfo.InvariantCulture);
     }
+
+    /// <summary>
+    /// Real Color field shape (StardewValley.NetColor - Chest.playerChoiceColor, ColoredObject.
+    /// color, ...) - confirmed via a real placed Chest's own &lt;playerChoiceColor&gt; (see
+    /// ChestXmlBuilder): child elements B/G/R/A (that exact order, not RGBA) plus a PackedValue
+    /// int mirroring them (XNA's Color.PackedValue = R | G&lt;&lt;8 | B&lt;&lt;16 | A&lt;&lt;24) -
+    /// kept in sync on write even though nothing observed here proves the game re-reads
+    /// PackedValue rather than recomputing it, since matching the real writer's shape exactly
+    /// costs nothing and avoids being the one save tool that writes a stale value.
+    /// </summary>
+    public static (byte R, byte G, byte B, byte A)? TryGetChildColor(this XElement parent, string childName)
+    {
+        var child = parent.Element(childName);
+        if (child is null)
+            return null;
+
+        byte Get(string name) => (byte)(child.Element(name)?.Value is { } v ? int.Parse(v, CultureInfo.InvariantCulture) : 0);
+        return (Get("R"), Get("G"), Get("B"), Get("A"));
+    }
+
+    public static void SetChildColorCreateIfMissing(this XElement parent, string childName, byte r, byte g, byte b, byte a)
+    {
+        var child = parent.Element(childName);
+        if (child is null)
+        {
+            child = new XElement(childName);
+            parent.Add(child);
+        }
+        else
+        {
+            child.RemoveNodes();
+        }
+
+        var packedValue = (uint)r | ((uint)g << 8) | ((uint)b << 16) | ((uint)a << 24);
+        child.Add(
+            new XElement("B", b),
+            new XElement("G", g),
+            new XElement("R", r),
+            new XElement("A", a),
+            new XElement("PackedValue", packedValue));
+    }
 }

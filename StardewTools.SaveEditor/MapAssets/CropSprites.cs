@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 
 namespace StardewTools.SaveEditor.MapAssets;
 
@@ -43,6 +46,81 @@ public static class CropSprites
         var x = Math.Min(240, column * 16 + oddRowOffset);
         var y = rowInSpriteSheet / 2 * 32;
         source = new Rect(x, y, 16, 32);
+        return true;
+    }
+
+    private static readonly Dictionary<string, WriteableBitmap> TintCache = new();
+
+    /// <summary>Real flowers (see CropEditor.ProgramColored remarks) draw a SECOND, colored copy
+    /// of the sprite on top of the base one once mature - from a different column of the SAME
+    /// row (decompiled Crop.draw()'s coloredSourceRect: column = currentPhase + 1 + 1, no
+    /// odd-tile/phase-0 adjustment, unlike the base sprite's column formula above), tinted by a
+    /// straight per-channel multiply (SpriteBatch.Draw's own color-tint semantics - the sprite's
+    /// own alpha is preserved, not the tint's, since crops.png tiles are already fully opaque/
+    /// transparent per pixel and every real TintColors entry sampled had alpha 255 anyway).
+    /// Avalonia's DrawingContext has no per-draw tint parameter (unlike SpriteBatch.Draw), so -
+    /// same rationale/technique as BuildingPainter.cs - this does the multiply once on the CPU
+    /// into a small cached bitmap sized to just this one frame, not the whole sheet.</summary>
+    public static bool TryGetTintedOverlay(string contentFolder, int rowInSpriteSheet, int currentPhase,
+        byte tintR, byte tintG, byte tintB, out Bitmap tinted, out Rect source)
+    {
+        tinted = null!;
+        source = default;
+
+        if (!TryGetBitmap(contentFolder, out var sheet))
+            return false;
+
+        var column = currentPhase + 1 + 1;
+        var oddRowOffset = rowInSpriteSheet % 2 != 0 ? 128 : 0;
+        var x = Math.Min(240, column * 16 + oddRowOffset);
+        var y = rowInSpriteSheet / 2 * 32;
+        // The RETURNED bitmap is a small standalone crop of just this one frame (not the whole
+        // sheet) - source must be in ITS local coordinates (0,0,16,32), not the sheet's (x,y) the
+        // pixels were extracted FROM, or DrawImage samples out of bounds on a 16x32 bitmap and
+        // silently renders nothing.
+        source = new Rect(0, 0, 16, 32);
+
+        var key = $"{contentFolder}|{x}|{y}|{tintR}|{tintG}|{tintB}";
+        if (TintCache.TryGetValue(key, out var cached))
+        {
+            tinted = cached;
+            return true;
+        }
+
+        const int w = 16, h = 32;
+        var stride = w * 4;
+        var buffer = Marshal.AllocHGlobal(stride * h);
+        byte[] pixels;
+        try
+        {
+            sheet.CopyPixels(new PixelRect(x, y, w, h), buffer, stride * h, stride);
+            pixels = new byte[stride * h];
+            Marshal.Copy(buffer, pixels, 0, pixels.Length);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            // RGBA byte order (same convention BuildingPainter.cs's own read/shift/write
+            // round-trip already relies on - confirmed there via a real paint mask's red channel
+            // landing at offset 0).
+            pixels[i] = (byte)(pixels[i] * tintR / 255);
+            pixels[i + 1] = (byte)(pixels[i + 1] * tintG / 255);
+            pixels[i + 2] = (byte)(pixels[i + 2] * tintB / 255);
+        }
+
+        var writeable = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Rgba8888, AlphaFormat.Unpremul);
+        using (var fb = writeable.Lock())
+        {
+            for (var row = 0; row < h; row++)
+                Marshal.Copy(pixels, row * stride, fb.Address + row * fb.RowBytes, stride);
+        }
+
+        TintCache[key] = writeable;
+        tinted = writeable;
         return true;
     }
 

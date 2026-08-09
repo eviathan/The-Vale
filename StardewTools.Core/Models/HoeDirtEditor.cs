@@ -41,11 +41,28 @@ public sealed class HoeDirtEditor
         set => _feature.SetChildInt("state", value);
     }
 
-    public int Fertilizer
+    /// <summary>The fertilizer applied to this tile, as its real qualified (or legacy
+    /// unqualified) Data/Objects.json item id - e.g. "(O)369" for Quality Fertilizer. NetString
+    /// on the real HoeDirt (decompiled), not an int - this property used to be typed int and
+    /// would throw parsing any real qualified id. "0" is the real game's own sentinel for "no
+    /// fertilizer", not null or a missing/empty element - confirmed via a real save's own
+    /// "&lt;fertilizer&gt;0&lt;/fertilizer&gt;" on every untreated tile, and decompiled
+    /// HoeDirt.HasFertilizer()'s own `fertilizer.Value != "0"` check (not a null check).</summary>
+    public string FertilizerId
     {
-        get => _feature.GetChildInt("fertilizer");
-        set => _feature.SetChildInt("fertilizer", value);
+        get => _feature.GetChildText("fertilizer");
+        set => _feature.SetChildText("fertilizer", value);
     }
+
+    public bool HasFertilizer => FertilizerId != "0";
+
+    /// <summary>Applies (or replaces) this tile's fertilizer. Real gameplay blocks replacing an
+    /// existing DIFFERENT fertilizer without removing it first (HoeDirt.
+    /// CheckApplyFertilizerRules) - not enforced here, since this is a direct editor rather than
+    /// simulated gameplay.</summary>
+    public void ApplyFertilizer(string qualifiedItemId) => FertilizerId = qualifiedItemId;
+
+    public void RemoveFertilizer() => FertilizerId = "0";
 
     public bool IsGreenhouseDirt
     {
@@ -69,17 +86,25 @@ public sealed class HoeDirtEditor
     /// appended to phaseDays is the game's own "stays in this phase forever" sentinel once a
     /// crop finishes growing (Data/Crops.json's own DaysInPhase list never includes it).
     /// harvestMethod 0/1 = Grab/Scythe (StardewValley.GameData.Crops.HarvestMethod enum, decompiled).
+    /// tintColor/programColored are null/false for every crop except real flowers (Tulip, Poppy,
+    /// Blue Jazz, Summer Spangle, Fairy Rose) - the real game randomly picks one of Data/Crops.
+    /// json's own TintColors entries at plant time (decompiled Crop's data-driven constructor) and
+    /// draws it as a colored overlay once the crop reaches its last growth phase; the caller
+    /// (MapTabViewModel.PlantCropAt) does the same random pick from PlaceableCrop.TintColors.
     /// </summary>
     public CropEditor PlantCrop(
         int seedIndex, IReadOnlyList<int> daysInPhase, int regrowDays, int harvestItemId,
         int harvestMinStack, int harvestMaxStack, double harvestMaxIncreasePerFarmingLevel,
         bool isScytheHarvest, bool isRaisedSeeds, double chanceForExtraCrops, int rowInSpriteSheet,
-        IReadOnlyList<string> seasons, int currentPhase, int dayOfCurrentPhase, bool fullGrown, bool flip)
+        IReadOnlyList<string> seasons, int currentPhase, int dayOfCurrentPhase, bool fullGrown, bool flip,
+        (byte R, byte G, byte B, byte A)? tintColor = null)
     {
         _feature.Element("crop")?.Remove();
 
         var phaseDaysElement = new XElement("phaseDays", daysInPhase.Select(d => new XElement("int", d)));
         phaseDaysElement.Add(new XElement("int", 99999));
+
+        var (tr, tg, tb, ta) = tintColor ?? (0, 0, 0, 0);
 
         var crop = new XElement("crop",
             phaseDaysElement,
@@ -96,11 +121,12 @@ public sealed class HoeDirtEditor
             new XElement("daysOfUnclutteredGrowth", 0),
             new XElement("whichForageCrop", 0),
             new XElement("seasonsToGrowIn", seasons.Select(s => new XElement("string", s.ToLowerInvariant()))),
-            new XElement("tintColor", new XElement("B", 0), new XElement("G", 0), new XElement("R", 0), new XElement("A", 0), new XElement("PackedValue", 0)),
+            new XElement("tintColor", new XElement("B", tb), new XElement("G", tg), new XElement("R", tr), new XElement("A", ta),
+                new XElement("PackedValue", (uint)tr | ((uint)tg << 8) | ((uint)tb << 16) | ((uint)ta << 24))),
             new XElement("flip", flip),
             new XElement("fullGrown", fullGrown),
             new XElement("raisedSeeds", isRaisedSeeds),
-            new XElement("programColored", false),
+            new XElement("programColored", tintColor is not null),
             new XElement("dead", false),
             new XElement("forageCrop", false),
             new XElement("chanceForExtraCrops", chanceForExtraCrops),

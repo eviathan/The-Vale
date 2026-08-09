@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
@@ -50,6 +51,11 @@ public partial class ItemRowViewModel : ViewModelBase
     [ObservableProperty] private int _stack;
     [ObservableProperty] private NamedValue _selectedQuality;
 
+    /// <summary>Only ColoredObject-subclass items (Wool, Roe/Aged Roe, Juice, Wine, Duck
+    /// Feather, ...) carry a real dye color - see ItemEditor.Color/HasColor remarks.</summary>
+    public bool HasColor => Item.HasColor;
+    [ObservableProperty] private Color _dyeColor;
+
     /// <summary><paramref name="onChanged"/> is only needed when something outside this row
     /// (e.g. a map-entity details panel embedding it) needs to react to an edit - the
     /// Inventory/Storage tabs that own this row directly don't need it.</summary>
@@ -60,6 +66,8 @@ public partial class ItemRowViewModel : ViewModelBase
         _onChanged = onChanged;
         _stack = item.Stack;
         _selectedQuality = GameEnums.FindOrFirst(GameEnums.ItemQualities, item.Quality ?? 0);
+        if (item.Color is { } c)
+            _dyeColor = Color.FromArgb(c.A, c.R, c.G, c.B);
         _isBound = true;
     }
 
@@ -74,6 +82,14 @@ public partial class ItemRowViewModel : ViewModelBase
         if (_isBound && Item.HasQuality)
             Item.Quality = value.Value;
         if (_isBound) _onChanged?.Invoke(this);
+    }
+
+    partial void OnDyeColorChanged(Color value)
+    {
+        if (!_isBound || !Item.HasColor)
+            return;
+        Item.Color = (value.R, value.G, value.B, value.A);
+        _onChanged?.Invoke(this);
     }
 
     [RelayCommand]

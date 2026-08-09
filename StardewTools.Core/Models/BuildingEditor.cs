@@ -120,6 +120,13 @@ public sealed class BuildingEditor
         }
     }
 
+    /// <summary>Whether this building carries the OTHER interior shape - a real, per-instance
+    /// nested &lt;indoors&gt; GameLocation (Shed, and in future Barn/Coop) rather than
+    /// NonInstancedIndoorsName's shared-top-level-location shape. See
+    /// SaveGameEditor.BuildingInteriorLocationName/GetLocationMap for how this resolves to an
+    /// editable location, and BuildingIndoorsEditor for what writes it.</summary>
+    public bool HasNestedIndoors => _element.Element("indoors") is not null;
+
     /// <summary>Animal-building capacity/current headcount - real fields on every building type
     /// (not just Barn/Coop; Greenhouse/Farmhouse both carry the inert default -1/20 depending on
     /// vintage), confirmed via real save data. Defensive: TryGet since older/tool-created

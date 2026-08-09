@@ -450,6 +450,18 @@ public sealed class FarmMapControl : Control
     /// a stateless snapshot renderer, not a live simulation.</summary>
     private readonly Dictionary<(int X, int Y), string> _flooringLookup = new();
 
+    /// <summary>Position -> true for every placed HoeDirt tile NOT in paddy state (State == 2) -
+    /// rebuilt fresh at the top of every RenderRealMap pass, same rationale as _flooringLookup.
+    /// Matches HoeDirt.cs's own gatherNeighbors(), which excludes paddy-state tiles from counting
+    /// as a joinable neighbor (`dirt.state.Value != 2`).</summary>
+    private readonly HashSet<(int X, int Y)> _hoeDirtLookup = new();
+
+    /// <summary>Position -> ParentSheetIndex for every placed real Fence Object (xsi:type="Fence" -
+    /// see FenceSprites remarks) - rebuilt fresh at the top of every RenderRealMap pass, same
+    /// rationale as _flooringLookup/_hoeDirtLookup. Fence.countsForDrawing() only connects same-
+    /// material neighbors, so the material id itself (not just "is a fence") is what's needed.</summary>
+    private readonly Dictionary<(int X, int Y), int> _fenceLookup = new();
+
     private TilePosition? _dragStartTile;
     private TilePosition? _dragCurrentTile;
     private bool _isDragging;
@@ -912,10 +924,17 @@ public sealed class FarmMapControl : Control
         var allEntities = entitiesByRow.SelectMany(g => g).ToList();
 
         _flooringLookup.Clear();
+        _hoeDirtLookup.Clear();
+        _fenceLookup.Clear();
         foreach (var e in allEntities)
         {
             if (e.Kind == MapEntityKind.Flooring && e.Source is FlooringEditor flooringSource)
                 _flooringLookup[(e.Position.X, e.Position.Y)] = flooringSource.WhichFloor;
+            else if (e.Kind == MapEntityKind.HoeDirt && e.Source is HoeDirtEditor hoeDirtSource && hoeDirtSource.State != 2)
+                _hoeDirtLookup.Add((e.Position.X, e.Position.Y));
+            else if (e.Kind == MapEntityKind.Object && e.Source is PlacedObjectEditor fenceSource
+                && fenceSource.Item.ItemType == "Fence" && fenceSource.Item.ParentSheetIndex is int fenceIndex)
+                _fenceLookup[(e.Position.X, e.Position.Y)] = fenceIndex;
         }
 
         // Row-by-row interleaving approximates the game's Y-sorted draw order: a tall sprite
@@ -1040,6 +1059,36 @@ public sealed class FarmMapControl : Control
             return;
         }
 
+        if (entity.Kind == MapEntityKind.FruitTree && entity.Source is FruitTreeEditor fruitTree
+            && !string.IsNullOrEmpty(ContentFolder)
+            && TryDrawFruitTreeSprite(context, fruitTree, entity.Position, pixelOffsetX, pixelOffsetY, scale, out var fruitTreeBounds))
+        {
+            Record(fruitTreeBounds);
+            return;
+        }
+
+        if (entity.Kind == MapEntityKind.Furniture && entity.Source is FurnitureEditor furniture
+            && !string.IsNullOrEmpty(ContentFolder)
+            && FurnitureSprites.TryGetBitmap(ContentFolder, out var furnitureBitmap))
+        {
+            // Bottom-anchored at the footprint's bottom edge, left-aligned at its left edge -
+            // ported from decompiled Furniture.draw(): drawPosition.Y = boundingBox.Y -
+            // (sourceRect.Height*4 - boundingBox.Height), which puts the sprite's bottom exactly
+            // at boundingBox.Bottom (X is a direct boundingBox.X - boundingBox.Left).
+            var source = furniture.SourceRect;
+            var box = furniture.BoundingBox;
+            var pixelsPerSourcePixel = scale / 16.0;
+            var fw = source.Width * pixelsPerSourcePixel;
+            var fh = source.Height * pixelsPerSourcePixel;
+            var boxBottomTiles = box.Y / 64.0 + box.Height / 64.0;
+            var fx = pixelOffsetX + box.X / 64.0 * scale;
+            var fy = pixelOffsetY + boxBottomTiles * scale - fh;
+            var furnitureRect = new Rect(fx, fy, fw, fh);
+            context.DrawImage(furnitureBitmap, new Rect(source.X, source.Y, source.Width, source.Height), furnitureRect);
+            Record(furnitureRect);
+            return;
+        }
+
         if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor craftable
             && !string.IsNullOrEmpty(ContentFolder) && craftable.Item.BigCraftable && craftable.Item.ParentSheetIndex is int craftableIndex
             && BigCraftableSprites.TryGetSprite(ContentFolder, craftableIndex, out var craftableBitmap, out var craftableSource))
@@ -1054,6 +1103,38 @@ public sealed class FarmMapControl : Control
             var craftableRect = new Rect(cx, cy, cw, ch);
             context.DrawImage(craftableBitmap, craftableSource, craftableRect);
             Record(craftableRect);
+            return;
+        }
+
+        if (entity.Kind == MapEntityKind.Object && entity.Source is PlacedObjectEditor fence
+            && !string.IsNullOrEmpty(ContentFolder) && fence.Item.ItemType == "Fence" && fence.Item.ParentSheetIndex is int fenceIdx
+            && FenceSprites.TryGetBitmap(ContentFolder, fenceIdx, out var fenceBitmap))
+        {
+            // Real connectivity SUM (not a bitmask - Left=10/Right=100/Down=500/Up=1000, see
+            // FenceSprites remarks), only counting same-material neighbors.
+            var connectivitySum = 0;
+            if (_fenceLookup.TryGetValue((entity.Position.X - 1, entity.Position.Y), out var leftId) && leftId == fenceIdx)
+                connectivitySum += 10;
+            if (_fenceLookup.TryGetValue((entity.Position.X + 1, entity.Position.Y), out var rightId) && rightId == fenceIdx)
+                connectivitySum += 100;
+            if (_fenceLookup.TryGetValue((entity.Position.X, entity.Position.Y + 1), out var downId) && downId == fenceIdx)
+                connectivitySum += 500;
+            if (_fenceLookup.TryGetValue((entity.Position.X, entity.Position.Y - 1), out var upId) && upId == fenceIdx)
+                connectivitySum += 1000;
+
+            // Bottom-anchored like trees/bigCraftables - a fence's 16x32 sprite is always taller
+            // (2 tiles) than its 1-tile footprint (confirmed via decompiled Fence.draw()'s own
+            // `y * 64 - 64` dest origin - the sprite starts one full tile above and ends exactly
+            // at this tile's bottom edge).
+            var fenceSource = FenceSprites.SourceFor(connectivitySum);
+            var pixelsPerSourcePixel = scale / 16.0;
+            var fw = fenceSource.Width * pixelsPerSourcePixel;
+            var fh = fenceSource.Height * pixelsPerSourcePixel;
+            var fx = pixelOffsetX + entity.Position.X * scale;
+            var fy = pixelOffsetY + entity.Position.Y * scale + scale - fh;
+            var fenceRect = new Rect(fx, fy, fw, fh);
+            context.DrawImage(fenceBitmap, fenceSource, fenceRect);
+            Record(fenceRect);
             return;
         }
 
@@ -1152,11 +1233,25 @@ public sealed class FarmMapControl : Control
             var dx = pixelOffsetX + entity.Position.X * scale;
             var dy = pixelOffsetY + entity.Position.Y * scale;
             var dirtRect = new Rect(dx, dy, scale, scale);
-            context.DrawImage(dirtBitmap, HoeDirtSprites.DrySource, dirtRect);
+
+            byte neighborMask = 0;
+            foreach (var (ndx, ndy, bit) in HoeDirtSprites.NeighborOffsets)
+            {
+                if (_hoeDirtLookup.Contains((entity.Position.X + ndx, entity.Position.Y + ndy)))
+                    neighborMask |= bit;
+            }
+            context.DrawImage(dirtBitmap, HoeDirtSprites.SourceFor(neighborMask), dirtRect);
             if (dirt.State is 1 or 2)
             {
                 var overlaySource = dirt.State == 2 ? HoeDirtSprites.PaddyOverlaySource : HoeDirtSprites.WateredOverlaySource;
                 context.DrawImage(dirtBitmap, overlaySource, dirtRect);
+            }
+            if (dirt.HasFertilizer && MenuChrome.Cursors is { } cursorsBitmap)
+            {
+                // Same anchor as the dirt tile itself (tile's top-left, full 64x64) - matches
+                // decompiled HoeDirt.DrawOptimized's fert_batch.Draw call, which uses the exact
+                // same drawPos as the dirt/watered layers below it.
+                context.DrawImage(cursorsBitmap, FertilizerSprites.SourceFor(dirt.FertilizerId), dirtRect);
             }
 
             var dirtBounds = dirtRect;
@@ -1179,6 +1274,24 @@ public sealed class FarmMapControl : Control
                 else
                 {
                     context.DrawImage(cropBitmap, cropSource, cropRect);
+                }
+
+                // Real flowers draw a second, colored copy on top once mature - see
+                // CropSprites.TryGetTintedOverlay remarks. Without this a flower's base sprite is
+                // just an undifferentiated green cluster (the actual bloom color IS the overlay).
+                if (crop.ProgramColored && !crop.Dead && crop.CurrentPhase == crop.PhaseCount
+                    && crop.TintColor is { } tint
+                    && CropSprites.TryGetTintedOverlay(ContentFolder, crop.RowInSpriteSheet, crop.CurrentPhase, tint.R, tint.G, tint.B, out var tintedBitmap, out var tintedSource))
+                {
+                    if (crop.Flip)
+                    {
+                        using (context.PushTransform(FlipHorizontalAround(cropRect)))
+                            context.DrawImage(tintedBitmap, tintedSource, cropRect);
+                    }
+                    else
+                    {
+                        context.DrawImage(tintedBitmap, tintedSource, cropRect);
+                    }
                 }
 
                 dirtBounds = dirtBounds.Union(cropRect);
@@ -1304,6 +1417,52 @@ public sealed class FarmMapControl : Control
         var canopyHeight = canopySource.Height * pixelsPerSourcePixel;
         var canopyDest = new Rect(tileLeft + scale / 2 - canopyWidth / 2, tileBottom - canopyHeight, canopyWidth, canopyHeight);
         DrawLayer(canopyBitmap, canopySource, canopyDest);
+
+        drawnBounds = trunkDest.Union(canopyDest);
+        return true;
+    }
+
+    /// <summary>See FruitTreeSprites remarks for the sapling-vs-mature two-layer split and the
+    /// documented simplification vs. the real game's exact overlap offsets.</summary>
+    private bool TryDrawFruitTreeSprite(DrawingContext context, FruitTreeEditor fruitTree, TilePosition position, double pixelOffsetX, double pixelOffsetY, double scale, out Rect drawnBounds)
+    {
+        if (!FruitTreeSprites.TryGetBitmap(ContentFolder!, out var bitmap))
+        {
+            drawnBounds = default;
+            return false;
+        }
+
+        var pixelsPerSourcePixel = scale / 16.0;
+        var tileLeft = pixelOffsetX + position.X * scale;
+        var tileTop = pixelOffsetY + position.Y * scale;
+        var tileBottom = tileTop + scale;
+        var spriteRow = PlaceableFruitTrees.All.FirstOrDefault(t => t.TreeId == fruitTree.TreeId)?.TextureSpriteRow ?? 0;
+
+        if (fruitTree.GrowthStage < 4 && !fruitTree.Stump)
+        {
+            var source = FruitTreeSprites.SaplingSource(spriteRow, fruitTree.GrowthStage);
+            var width = source.Width * pixelsPerSourcePixel;
+            var height = source.Height * pixelsPerSourcePixel;
+            var dest = new Rect(tileLeft + scale / 2 - width / 2, tileBottom - height, width, height);
+            context.DrawImage(bitmap, source, dest);
+            drawnBounds = dest;
+            return true;
+        }
+
+        // Mature: trunk bottom-anchored to the tile's own bottom, canopy on top overlapping the
+        // trunk's top edge by one native-pixel-row.
+        var trunkSource = FruitTreeSprites.TrunkSource(spriteRow);
+        var trunkWidth = trunkSource.Width * pixelsPerSourcePixel;
+        var trunkHeight = trunkSource.Height * pixelsPerSourcePixel;
+        var trunkDest = new Rect(tileLeft + scale / 2 - trunkWidth / 2, tileBottom - trunkHeight, trunkWidth, trunkHeight);
+        context.DrawImage(bitmap, trunkSource, trunkDest);
+
+        var canopySource = FruitTreeSprites.CanopySource(spriteRow, FruitTreeSprites.SeasonIndex(Season));
+        var canopyWidth = canopySource.Width * pixelsPerSourcePixel;
+        var canopyHeight = canopySource.Height * pixelsPerSourcePixel;
+        var canopyOverlap = 16 * pixelsPerSourcePixel;
+        var canopyDest = new Rect(tileLeft + scale / 2 - canopyWidth / 2, trunkDest.Top + canopyOverlap - canopyHeight, canopyWidth, canopyHeight);
+        context.DrawImage(bitmap, canopySource, canopyDest);
 
         drawnBounds = trunkDest.Union(canopyDest);
         return true;

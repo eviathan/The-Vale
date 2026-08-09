@@ -15,11 +15,13 @@ public enum PowerUnlockKind
     /// <summary>Settable - toggles a specific event id's presence in Farmer.eventsSeen.</summary>
     EventSeen,
 
-    /// <summary>Not settable here - the real condition is "a specific key in the stats
-    /// stat_dictionary is >= 1", and no real save with a populated stat_dictionary was available
-    /// to verify that dictionary's exact XML shape against (it's empty - `&lt;stat_dictionary /&gt;`
-    /// - in the one real save this tool has been built against). Shown so it's visible rather
-    /// than silently missing, not editable until that shape is confirmed.</summary>
+    /// <summary>Settable - the real condition is "Stats.Get(key) &gt;= 1" (decompiled Stats.cs's
+    /// own Get/Set), i.e. a key in the Values dictionary is nonzero. Confirmed against decompiled
+    /// Stats.cs: `stat_dictionary` (the field this was originally modeled after) is itself marked
+    /// obsolete - "kept to preserve data from old save files" - the real, current mechanism
+    /// PLAYER_STAT reads is Stats.Values (StatsEditor.GetRaw/SetRaw, already implemented for the
+    /// Stats tab, its exact XML shape confirmed against a real save's own populated Values
+    /// dictionary), not stat_dictionary at all.</summary>
     StatDriven,
 }
 

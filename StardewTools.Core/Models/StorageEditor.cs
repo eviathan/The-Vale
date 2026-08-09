@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using StardewTools.Core.Serialization;
 
 namespace StardewTools.Core.Models;
 
@@ -10,8 +11,11 @@ namespace StardewTools.Core.Models;
 /// </summary>
 public sealed class ChestEditor
 {
+    private readonly XElement _element;
+
     public ChestEditor(XElement chestElement)
     {
+        _element = chestElement;
         Item = new ItemEditor(chestElement);
 
         // Unverified: no populated chest existed in the save file we grounded this schema
@@ -26,6 +30,38 @@ public sealed class ChestEditor
 
     /// <summary>Null if this chest's contents container couldn't be located - see remarks on the class.</summary>
     public ItemListEditor? Items { get; }
+
+    /// <summary>The color picked via right-click on a real placed Chest/Stone Chest (real field,
+    /// confirmed shape/default - see ChestXmlBuilder, which already writes this on every chest
+    /// this tool places: black = "no custom color", the game's own sentinel for "draw the plain
+    /// unpainted lid" per decompiled Chest.draw()). Only meaningful for ParentSheetIndex 130
+    /// (Chest) or 232 (Stone Chest) in the real game, but harmless to read/write on any chest
+    /// variant - the disguised ones (Mini-Fridge, Mini-Shipping Bin, Hopper, Junimo Chest) simply
+    /// never check it when drawing.</summary>
+    public (byte R, byte G, byte B, byte A) PlayerChoiceColor
+    {
+        get => _element.TryGetChildColor("playerChoiceColor") ?? (0, 0, 0, 255);
+        set => _element.SetChildColorCreateIfMissing("playerChoiceColor", value.R, value.G, value.B, value.A);
+    }
+
+    /// <summary>The chest's display name - a real, base-Object field (every placed Object has one,
+    /// confirmed present on the real Chest example this schema was grounded against: "Chest").
+    /// Not a tool-only convenience: the real game lets a player rename a chest via its own menu's
+    /// rename field, which writes straight to this same element - so setting it here is exactly
+    /// as "real" as renaming one in-game, just easier to do for a chest buried in a shed you'd
+    /// otherwise have to walk to.</summary>
+    public string Name
+    {
+        get => _element.GetChildText("name");
+        set => _element.SetChildText("name", value);
+    }
+
+    /// <summary>Opaque identity for matching this chest against another ChestEditor instance that
+    /// might wrap the very same underlying save element - e.g. one found by scanning the whole
+    /// save (StorageEditor.Chests) vs. one derived from a specific placed Object on the Map tab
+    /// (PlacedObjectEditor.AsChest()). Two ChestEditor instances are "the same chest" iff this
+    /// matches by reference.</summary>
+    public object Identity => _element;
 }
 
 /// <summary>

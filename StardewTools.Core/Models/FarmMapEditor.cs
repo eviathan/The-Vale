@@ -47,6 +47,12 @@ public sealed class FarmMapEditor
             .Select(e => new GrassEditor(e.Position, e.Value))
             .ToList();
 
+    public IReadOnlyList<FruitTreeEditor> FruitTrees
+        => DictionaryEntries("terrainFeatures")
+            .Where(e => (string?)e.Value.Attribute(XsiType) == "FruitTree")
+            .Select(e => new FruitTreeEditor(e.Position, e.Value))
+            .ToList();
+
     /// <summary>Tilled soil, optionally with a planted crop - confirmed against a real save.</summary>
     public IReadOnlyList<HoeDirtEditor> HoeDirtTiles
         => DictionaryEntries("terrainFeatures")
@@ -92,11 +98,88 @@ public sealed class FarmMapEditor
             .Select(e => new PlacedObjectEditor(e.Position, e.Value))
             .ToList();
 
+    /// <summary>Placed furniture - a flat list (like Bush/ResourceClump/Building), not the
+    /// &lt;objects&gt; tile dictionary. See FurnitureEditor remarks.</summary>
+    public IReadOnlyList<FurnitureEditor> Furniture
+        => (_farmLocation.Element("furniture")?.Elements("Furniture") ?? Enumerable.Empty<XElement>())
+            .Select(e => new FurnitureEditor(e))
+            .ToList();
+
     /// <summary>Player-constructed buildings - see BuildingEditor remarks on why this is unverified.</summary>
     public IReadOnlyList<BuildingEditor> Buildings
         => (_farmLocation.Element("buildings")?.Elements("Building") ?? Enumerable.Empty<XElement>())
             .Select(e => new BuildingEditor(e))
             .ToList();
+
+    /// <summary>Real GameLocation.name field - "Farm" for the top-level farm, or an interior's
+    /// own real map name (e.g. "Shed"/"Barn"/"Coop2") when this wraps a building's &lt;indoors&gt;
+    /// (see BuildingIndoorsEditor). Null if genuinely absent (shouldn't happen for anything this
+    /// tool itself constructs, but real top-level locations loaded via SaveGameEditor.
+    /// GetLocationMap could in principle predate the field).</summary>
+    public string? Name => _farmLocation.Element("name")?.Value;
+
+    /// <summary>Real animalLimit field (AnimalHouse-specific, absent/0 on every other GameLocation
+    /// this class wraps - e.g. the top-level Farm - which is exactly the "am I inside a Barn/Coop
+    /// interior" gate the app layer uses, no separate tracking needed). See
+    /// BuildingIndoorsEditor.CreateDefaultAnimalHouse remarks.</summary>
+    public int AnimalLimit => _farmLocation.TryGetChildInt("animalLimit") ?? 0;
+
+    /// <summary>Animals living in this location - only meaningful when AnimalLimit &gt; 0 (i.e.
+    /// this FarmMapEditor wraps a Barn/Coop's &lt;indoors&gt;, not the top-level Farm). Real
+    /// NetLongDictionary&lt;FarmAnimal,...&gt; shape - `&lt;item&gt;&lt;key&gt;&lt;long&gt;N
+    /// &lt;/long&gt;&lt;/key&gt;&lt;value&gt;&lt;FarmAnimal&gt;...&lt;/FarmAnimal&gt;&lt;/value&gt;
+    /// &lt;/item&gt;` - confirmed against decompiled SerializableDictionary&lt;TKey,TValue&gt;.
+    /// WriteXml/ReadXml (the actual save-XML (de)serialization SerializableDictionary a NetLongDictionary
+    /// is backed by, not NetLongDictionary's own binary network ReadKey/WriteKey - a bare `long`'s
+    /// XmlSerializer output is `&lt;long&gt;value&lt;/long&gt;`, and FarmAnimal isn't polymorphic
+    /// (no xsi:type needed, unlike Object/TerrainFeature's base-class value type).</summary>
+    public IReadOnlyList<FarmAnimalEditor> Animals
+        => (_farmLocation.Element("animals")?.Elements("item") ?? Enumerable.Empty<XElement>())
+            .Select(item => item.Element("value")?.Element("FarmAnimal"))
+            .Where(fa => fa is not null)
+            .Select(fa => new FarmAnimalEditor(fa!))
+            .ToList();
+
+    /// <summary>Adopts a new animal into this location - only meaningful inside a Barn/Coop's
+    /// &lt;indoors&gt; (see Animals remarks). Generates a fresh myID unique against every animal
+    /// already in this dictionary (real save data could in principle span a huge id range, but a
+    /// simple looped-random-until-unique is the same pattern this codebase already uses wherever
+    /// else a fresh unique id is needed - e.g. FarmMapEditor.CloneEntityAt's building ids, just
+    /// long instead of Guid since myID's real type is long, not string). Appends the same id to
+    /// animalsThatLiveHere (AnimalHouse's own parallel id list, confirmed real - see
+    /// BuildingIndoorsEditor remarks) so both stay in sync, matching AnimalHouse.adoptAnimal's
+    /// real behavior.</summary>
+    public FarmAnimalEditor AddAnimal(string type, string buildingTypeILiveIn, string name, long ownerId)
+    {
+        var container = _farmLocation.Element("animals");
+        if (container is null)
+        {
+            container = new XElement("animals");
+            _farmLocation.Add(container);
+        }
+
+        var existingIds = Animals.Select(a => a.MyId).ToHashSet();
+        long myId;
+        do
+        {
+            myId = Random.Shared.NextInt64();
+        } while (existingIds.Contains(myId));
+
+        var animalElement = FarmAnimalEditor.CreateDefault(type, name, myId, ownerId, buildingTypeILiveIn);
+        container.Add(new XElement("item",
+            new XElement("key", new XElement("long", myId)),
+            new XElement("value", animalElement)));
+
+        var livesHere = _farmLocation.Element("animalsThatLiveHere");
+        if (livesHere is null)
+        {
+            livesHere = new XElement("animalsThatLiveHere");
+            _farmLocation.Add(livesHere);
+        }
+        livesHere.Add(new XElement("long", myId));
+
+        return new FarmAnimalEditor(animalElement);
+    }
 
     /// <summary>
     /// Places a new plain Object - or, when <paramref name="bigCraftable"/> is true, a
@@ -337,6 +420,41 @@ public sealed class FarmMapEditor
     }
 
     /// <summary>
+    /// Plants a fruit tree at the given tile - wrapped as &lt;TerrainFeature xsi:type="FruitTree"&gt;
+    /// in the same terrainFeatures dictionary Tree/Grass/HoeDirt already use. Field shape derived
+    /// from decompiled FruitTree.cs (no real placed-fruit-tree save evidence available locally -
+    /// see FruitTreeEditor remarks). <paramref name="treeId"/> is the real Data/FruitTrees.json
+    /// key (e.g. "628" for Cherry). growthStage 4 (fully grown) needs daysUntilMature 0 -
+    /// confirmed via FruitTree.GrowthStageToDaysUntilMature(), the real game's own growthStage-
+    /// to-daysUntilMature table - callers should pass the matching pair, not derive one from the
+    /// other independently.
+    /// </summary>
+    public FruitTreeEditor AddFruitTree(TilePosition position, string treeId, int growthStage, int daysUntilMature)
+    {
+        var container = TerrainFeaturesContainer();
+
+        var value = new XElement("TerrainFeature",
+            new XAttribute(XsiType, "FruitTree"),
+            new XElement("growthStage", growthStage),
+            new XElement("treeId", treeId),
+            new XElement("daysUntilMature", daysUntilMature),
+            new XElement("fruit"),
+            new XElement("struckByLightningCountdown", 0),
+            new XElement("health", 10),
+            new XElement("flipped", false),
+            new XElement("stump", false),
+            new XElement("greenHouseTileTree", false),
+            new XElement("growthRate", 1));
+
+        var item = new XElement("item",
+            new XElement("key", new XElement("Vector2", new XElement("X", position.X), new XElement("Y", position.Y))),
+            new XElement("value", value));
+
+        container.Add(item);
+        return new FruitTreeEditor(position, value);
+    }
+
+    /// <summary>
     /// Tills a tile - field shape copied verbatim from a real HoeDirt in an actual save (state/
     /// fertilizer/isGreenhouseDirt, no &lt;crop&gt; child - see HoeDirtEditor.PlantCrop for
     /// planting into it afterward). state 0 = dry (see HoeDirtEditor.State remarks).
@@ -393,6 +511,88 @@ public sealed class FarmMapEditor
         return new BushEditor(value);
     }
 
+    /// <summary>
+    /// Places a piece of furniture - field order/shape copied verbatim from a real save's own
+    /// starting Bed (isLostItem through drawHeldObjectLow, all base-class Furniture fields per
+    /// decompiled Furniture.cs's [XmlElement]-attributed members; bedType is BedFurniture-only
+    /// and deliberately omitted - see FurnitureEditor/PlaceableFurniture remarks for why this only
+    /// targets the generic, non-Bed/non-FishTank subset). xsi:type="Furniture" (not "BedFurniture"
+    /// or "FishTankFurniture") - the plain base class real generic furniture actually uses.
+    /// sourceRect/boundingBox/defaultBoundingBox are computed by the caller (PlaceableFurniture,
+    /// which knows the real TileSheets/furniture.png sheet width) rather than here, mirroring
+    /// decompiled InitializeAtTile/RecalculateBoundingBox computing and persisting these once at
+    /// placement time rather than re-deriving them on every draw.
+    /// </summary>
+    public FurnitureEditor AddFurniture(
+        TilePosition position, string furnitureId, string name, int parentSheetIndex,
+        int furnitureType, int rotations, int price,
+        int sourceX, int sourceY, int sourceWidth, int sourceHeight,
+        int boundingWidth, int boundingHeight, bool drawHeldObjectLow)
+    {
+        var container = _farmLocation.Element("furniture");
+        if (container is null)
+        {
+            container = new XElement("furniture");
+            _farmLocation.Add(container);
+        }
+
+        var boundingBoxX = position.X * 64;
+        var boundingBoxY = position.Y * 64;
+
+        XElement Rect(string elementName, int x, int y, int width, int height) => new(elementName,
+            new XElement("X", x), new XElement("Y", y), new XElement("Width", width), new XElement("Height", height),
+            new XElement("Location", new XElement("X", x), new XElement("Y", y)),
+            new XElement("Size", new XElement("X", width), new XElement("Y", height)));
+
+        var value = new XElement("Furniture",
+            new XAttribute(XsiType, "Furniture"),
+            new XElement("isLostItem", false),
+            new XElement("category", -24),
+            new XElement("hasBeenInInventory", false),
+            new XElement("name", name),
+            new XElement("parentSheetIndex", parentSheetIndex),
+            new XElement("itemId", furnitureId),
+            new XElement("specialItem", false),
+            new XElement("isRecipe", false),
+            new XElement("quality", 0),
+            new XElement("stack", 1),
+            new XElement("SpecialVariable", 0),
+            new XElement("tileLocation", new XElement("X", position.X), new XElement("Y", position.Y)),
+            new XElement("owner", 0),
+            new XElement("canBeSetDown", true),
+            new XElement("canBeGrabbed", true),
+            new XElement("isSpawnedObject", false),
+            new XElement("questItem", false),
+            new XElement("isOn", false),
+            new XElement("fragility", 0),
+            new XElement("price", price),
+            new XElement("edibility", -300),
+            new XElement("bigCraftable", false),
+            new XElement("setOutdoors", true),
+            new XElement("setIndoors", true),
+            new XElement("readyForHarvest", false),
+            new XElement("showNextIndex", false),
+            new XElement("flipped", false),
+            new XElement("isLamp", false),
+            new XElement("minutesUntilReady", 0),
+            Rect("boundingBox", boundingBoxX, boundingBoxY, boundingWidth, boundingHeight),
+            new XElement("scale", new XElement("X", 0), new XElement("Y", 0)),
+            new XElement("uses", 0),
+            new XElement("destroyOvernight", false),
+            new XElement("furniture_type", furnitureType),
+            new XElement("rotations", rotations),
+            new XElement("currentRotation", 0),
+            Rect("sourceRect", sourceX, sourceY, sourceWidth, sourceHeight),
+            Rect("defaultSourceRect", sourceX, sourceY, sourceWidth, sourceHeight),
+            Rect("defaultBoundingBox", boundingBoxX, boundingBoxY, boundingWidth, boundingHeight),
+            new XElement("drawHeldObjectLow", drawHeldObjectLow));
+
+        container.Add(value);
+        return new FurnitureEditor(value);
+    }
+
+    public void Remove(FurnitureEditor furniture) => furniture.Element.Remove();
+
     private XElement TerrainFeaturesContainer()
     {
         var container = _farmLocation.Element("terrainFeatures");
@@ -410,13 +610,27 @@ public sealed class FarmMapEditor
     /// no interior (Gold Clock, the 4 Obelisks, Well, Silo, Mill, Fish Pond, Pet Bowl, Stable,
     /// Shipping Bin - confirmed via Data/Buildings.json: these all have IndoorMap/
     /// NonInstancedIndoorLocation both null and HumanDoor (-1,-1), i.e. no door, no interior
-    /// to wire up). Buildings with a real interior (Barn, Coop, ...) need that interior
-    /// location linked correctly, which isn't verified here yet - see PlaceableBuildings in
-    /// the app layer for the actual safe list. Field order/shape confirmed against the
-    /// decompiled Building.cs's [XmlElement] attributes (no real placed-building save data
-    /// was available to verify against directly).
+    /// to wire up) plus Shed and the Barn/Coop family, whose real nested &lt;indoors&gt; interior
+    /// IS now written (see BuildingIndoorsEditor). Cabins (FarmHouse's much larger field surface)
+    /// and Big Shed (needs upgradeLevel wiring) still need that interior linked correctly, which
+    /// isn't done yet - see PlaceableBuildings in the app layer for the actual safe list. Field
+    /// order/shape confirmed against the decompiled Building.cs's [XmlElement] attributes (no
+    /// real placed-building save data was available to verify against directly).
+    ///
+    /// <paramref name="indoorMap"/>/<paramref name="animalLimit"/> are only used for the
+    /// Barn/Coop family (Data/Buildings.json's own IndoorMap/MaxOccupants for this building type -
+    /// null indoorMap means "no AnimalHouse interior to write", which is every other supported
+    /// building type including Shed, whose own interior is triggered by buildingType instead).
+    /// Building.load() unconditionally recomputes the EXTERIOR building's own maxOccupants/
+    /// humanDoor/animalDoor from Data/Buildings.json on every load regardless of what's saved
+    /// here (confirmed: Building.hasLoaded is [XmlIgnore], so it's always false right after
+    /// deserializing, and LoadFromBuildingData() - which sets exactly those fields - only ever
+    /// runs when !hasLoaded) - so leaving maxOccupants/humanDoor/animalDoor at their existing
+    /// placeholder values below is safe for every building type, not just the ones already
+    /// placeable before this change.
     /// </summary>
-    public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical, int hayCapacity = 0)
+    public BuildingEditor AddBuilding(TilePosition position, string buildingType, int tilesWide, int tilesHigh, bool magical, int hayCapacity = 0,
+        string? indoorMap = null, int animalLimit = 0)
     {
         var container = _farmLocation.Element("buildings");
         if (container is null)
@@ -454,6 +668,11 @@ public sealed class FarmMapEditor
             // chest - so there's no need to hand-construct one here).
             new XElement("hayCapacity", hayCapacity),
             new XElement("buildingChests"));
+
+        if (buildingType == "Shed")
+            element.Add(BuildingIndoorsEditor.CreateDefaultShed(position));
+        else if (indoorMap is not null)
+            element.Add(BuildingIndoorsEditor.CreateDefaultAnimalHouse(indoorMap, animalLimit, position));
 
         container.Add(element);
         return new BuildingEditor(element);
@@ -517,6 +736,7 @@ public sealed class FarmMapEditor
     }
 
     public void Remove(TreeEditor tree) => tree.Item.Remove();
+    public void Remove(FruitTreeEditor fruitTree) => fruitTree.Item.Remove();
     public void Remove(GrassEditor grass) => grass.Item.Remove();
     public void Remove(HoeDirtEditor dirt) => dirt.Item.Remove();
     public void Remove(ResourceClumpEditor clump) => clump.Element.Remove();
@@ -639,6 +859,34 @@ public sealed class FarmMapEditor
             default:
                 throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}.");
         }
+    }
+
+    /// <summary>
+    /// Shifts every placed tree/grass/hoe-dirt/fruit-tree/object/bush/furniture in this location
+    /// by (dx, dy) tiles - the same operation decompiled GameLocation.shiftContents() performs,
+    /// confirmed as exactly what FarmHouse.moveObjectsForHouseUpgrade() calls when the player's
+    /// house upgrade level changes (see MapTabViewModel.OnHouseUpgradeLevelChanged, the actual
+    /// caller - upgrading/downgrading the house resizes its interior, so without this, existing
+    /// content stays at its old coordinates, which usually land outside or in the wrong part of
+    /// the new layout: the real, reported "furniture floating near the top-left" bug). Buildings
+    /// and resourceClumps are deliberately NOT shifted - the real shiftContents() doesn't touch
+    /// them either (a FarmHouse interior has neither).
+    ///
+    /// Shifting an EXISTING placed Furniture (FurnitureEditor.Move) just needs its own
+    /// tileLocation/boundingBox/defaultBoundingBox fields nudged by the same delta - confirmed
+    /// via decompiled Object.TileLocation (whose setter calls RecalculateBoundingBox(), which for
+    /// Furniture just repositions boundingBox to the new tile at its EXISTING width/height).
+    /// Furniture.drawPosition is deliberately NOT shifted - see FurnitureEditor.Move remarks.
+    /// </summary>
+    public void ShiftContents(int dx, int dy)
+    {
+        foreach (var tree in Trees) tree.Move(new TilePosition(tree.Position.X + dx, tree.Position.Y + dy));
+        foreach (var grass in Grass) grass.Move(new TilePosition(grass.Position.X + dx, grass.Position.Y + dy));
+        foreach (var dirt in HoeDirtTiles) dirt.Move(new TilePosition(dirt.Position.X + dx, dirt.Position.Y + dy));
+        foreach (var fruitTree in FruitTrees) fruitTree.Move(new TilePosition(fruitTree.Position.X + dx, fruitTree.Position.Y + dy));
+        foreach (var obj in Objects) obj.Move(new TilePosition(obj.Position.X + dx, obj.Position.Y + dy));
+        foreach (var bush in Bushes) bush.Move(new TilePosition(bush.Position.X + dx, bush.Position.Y + dy));
+        foreach (var furniture in Furniture) furniture.Move(new TilePosition(furniture.Position.X + dx, furniture.Position.Y + dy));
     }
 
     /// <summary>

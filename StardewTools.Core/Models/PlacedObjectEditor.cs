@@ -22,6 +22,11 @@ public sealed class PlacedObjectEditor
 
     internal XElement WrappingItem => Item.Element.Parent!.Parent!;
 
+    /// <summary>Wraps this placed Object as a ChestEditor - valid to call whenever
+    /// Item.ItemType == "Chest" (not enforced here; same convention as the Fence-specific
+    /// rendering code already checking Item.ItemType before treating an Object as a fence).</summary>
+    public ChestEditor AsChest() => new(Item.Element);
+
     /// <summary>
     /// Unlike Tree/Grass/HoeDirt, a placed Object tracks its own tile position twice - once as
     /// the objects-dictionary key (what the game uses to look it up) and again on the Object

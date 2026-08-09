@@ -165,6 +165,45 @@ public static class GameEnums
     /// real values a &lt;Status&gt; element can hold.</summary>
     public static readonly IReadOnlyList<string> FriendshipStatuses = new[] { "Friendly", "Dating", "Engaged", "Married", "Divorced" };
 
+    /// <summary>Confirmed against the decompiled ResourceClump.cs's own named constants
+    /// (stumpIndex/hollowLogIndex/meteoriteIndex/boulderIndex/mineRock1-4Index) - the only 8 real
+    /// ParentSheetIndex values a resource clump ever uses; previously a free 0-999 spinner.</summary>
+    public static readonly IReadOnlyList<NamedValue> ResourceClumpTypes = new[]
+    {
+        new NamedValue(600, "Stump"),
+        new NamedValue(602, "Hollow Log"),
+        new NamedValue(622, "Meteorite"),
+        new NamedValue(672, "Boulder"),
+        new NamedValue(752, "Mine Rock 1"),
+        new NamedValue(754, "Mine Rock 2"),
+        new NamedValue(756, "Mine Rock 3"),
+        new NamedValue(758, "Mine Rock 4"),
+    };
+
+    /// <summary>Confirmed against the decompiled Tree.cs's own named constants (seedStage=0/
+    /// sproutStage=1/saplingStage=2/bushStage=3/treeStage=5) - 4 has no named constant in the
+    /// real source (the last step before fully grown) but is still a real, reachable growthStage
+    /// value, not skippable.</summary>
+    public static readonly IReadOnlyList<NamedValue> TreeGrowthStages = new[]
+    {
+        new NamedValue(0, "Seed"),
+        new NamedValue(1, "Sprout"),
+        new NamedValue(2, "Sapling"),
+        new NamedValue(3, "Bush"),
+        new NamedValue(4, "Small tree"),
+        new NamedValue(5, "Tree"),
+    };
+
+    /// <summary>Confirmed against the decompiled FarmHouse.cs (upgradeLevel switches: 0=starting
+    /// house, 1 adds the Kitchen, 2 adds an extra room, 3 adds the Cellar via AddCellarTiles).</summary>
+    public static readonly IReadOnlyList<NamedValue> HouseUpgradeLevels = new[]
+    {
+        new NamedValue(0, "Starting house"),
+        new NamedValue(1, "Kitchen"),
+        new NamedValue(2, "Extra room"),
+        new NamedValue(3, "Cellar"),
+    };
+
     public static string AchievementLabel(int id)
         => AchievementNames.TryGetValue(id, out var name) ? $"{id} - {name}" : $"{id} - Achievement #{id}";
 

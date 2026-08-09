@@ -102,7 +102,7 @@
 
                 <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusMessage}" Margin="0,12,0,0" Opacity="0.7"/>
 
-                <TabControl IsEnabled="{Binding IsSaveLoaded}">
+                <TabControl IsEnabled="{Binding IsSaveLoaded}" SelectedIndex="{Binding SelectedTabIndex}">
 
                     <TabItem Header="Player">
                         <ScrollViewer DataContext="{Binding Player}" x:DataType="vm:PlayerTabViewModel">
@@ -227,6 +227,10 @@
                                                 <TextBlock Text="Quality"/>
                                                 <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="140"/>
                                             </StackPanel>
+                                            <StackPanel Classes="field" IsVisible="{Binding HasColor}">
+                                                <TextBlock Text="Dye color"/>
+                                                <ColorPicker Color="{Binding DyeColor}" HorizontalAlignment="Left"/>
+                                            </StackPanel>
                                             <Button Command="{Binding RemoveCommand}" HorizontalAlignment="Left">
                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                     <controls:StardewIcon Kind="Trash" IconSize="14"/>
@@ -348,13 +352,13 @@
                     <TabItem Header="Powers">
                         <ScrollViewer Margin="0,10,0,0" DataContext="{Binding Powers}" x:DataType="vm:PowersTabViewModel">
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Covers what pre-1.6 saves called 'special items' (keys, guides, charms) plus Qi Walnut Room rewards (skill books, masteries). Book/Mastery rewards aren't editable yet - their real save format (a stats sub-dictionary) wasn't verifiable against any real example."
+                                <TextBlock Text="Covers what pre-1.6 saves called 'special items' (keys, guides, charms) plus Qi Walnut Room rewards (skill books, masteries)."
                                            TextWrapping="Wrap" Opacity="0.7" Width="600"/>
                                 <ItemsControl ItemsSource="{Binding Powers}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:PowerRowViewModel">
                                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2">
-                                                <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsUnlocked}" IsEnabled="{Binding IsEditable}" Width="260"/>
+                                                <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsUnlocked}" Width="260"/>
                                                 <TextBlock Text="{Binding KindLabel}" Opacity="0.5" FontSize="11" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </DataTemplate>
@@ -454,6 +458,18 @@
                                 <DockPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="Select a chest on the left." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
                                                IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNull}}"/>
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8"
+                                                IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                        <TextBlock Text="Name" VerticalAlignment="Center"/>
+                                        <TextBox Text="{Binding SelectedChest.Name}" Width="160"
+                                                  ToolTip.Tip="Same rename a player can do via the chest's own in-game menu - just editable here without walking to it. Makes it easier to spot in the list on the left."/>
+                                    </StackPanel>
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8"
+                                                IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                                        <TextBlock Text="Lid color" VerticalAlignment="Center"/>
+                                        <ColorPicker Color="{Binding SelectedChest.Color}" IsAlphaEnabled="False"/>
+                                        <TextBlock Text="Black = no custom color (plain unpainted lid, same as the real color wheel's default). Alpha is disabled because the real game tints the whole chest sprite with this color, alpha included - anything less than fully opaque makes the chest invisible in-game, not just tinted." VerticalAlignment="Center" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Width="260"/>
+                                    </StackPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="This chest is empty - add something from the right." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
                                                IsVisible="{Binding ChestIsEmpty}"/>
                                     <ScrollViewer>
@@ -474,6 +490,7 @@
                                                             <NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="110" FormatString="0" IsEnabled="{Binding IsStackable}"/>
                                                             <TextBlock Text="Quality" VerticalAlignment="Center" IsVisible="{Binding HasQuality}"/>
                                                             <ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="110" IsVisible="{Binding HasQuality}"/>
+                                                            <ColorPicker Color="{Binding DyeColor}" IsVisible="{Binding HasColor}"/>
                                                             <Button Command="{Binding RemoveCommand}">
                                                                 <controls:StardewIcon Kind="Trash" IconSize="14"/>
                                                             </Button>
@@ -557,7 +574,7 @@
                     </TabItem>
 
                     <TabItem Header="Map">
-                        <Grid x:Name="MapTabRoot" ColumnDefinitions="*,260" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
+                        <Grid x:Name="MapTabRoot" ColumnDefinitions="*,340" Margin="0,10,0,0" DataContext="{Binding Map}" x:DataType="vm:MapTabViewModel">
                             <Grid.KeyBindings>
                                 <KeyBinding Gesture="D1" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.Object}"/>
                                 <KeyBinding Gesture="D2" Command="{Binding SetPlacementToolCommand}" CommandParameter="{x:Static vm:PlacementTool.Building}"/>
@@ -595,22 +612,43 @@
                                     <ToggleButton Content="Object" IsChecked="{Binding IsObjectToolActive}" Margin="0,0,4,4"/>
                                     <ToggleButton Content="Building" IsChecked="{Binding IsBuildingToolActive}" Margin="0,0,4,4"/>
                                     <ToggleButton Content="Till" IsChecked="{Binding IsTillToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Fertilize" IsChecked="{Binding IsFertilizeToolActive}" Margin="0,0,4,4"/>
                                     <ToggleButton Content="Plant Crop" IsChecked="{Binding IsPlantCropToolActive}" Margin="0,0,4,4"/>
                                     <ToggleButton Content="Plant Tree" IsChecked="{Binding IsPlantTreeToolActive}" Margin="0,0,4,4"/>
                                     <ToggleButton Content="Plant Bush" IsChecked="{Binding IsPlantBushToolActive}" Margin="0,0,4,4"/>
+                                    <ToggleButton Content="Furniture" IsChecked="{Binding IsFurnitureToolActive}" Margin="0,0,4,4"/>
                                     <TextBlock Text="{Binding BrushSize, StringFormat='Brush: {0}x{0} ([ / ] to resize)'}" VerticalAlignment="Center"
                                                Opacity="0.7" FontSize="11" Margin="8,0,0,4" IsVisible="{Binding IsAnyToolActive}"/>
                                     <ComboBox ItemsSource="{Binding DrawShapeOptions}" SelectedItem="{Binding DrawShape}"
                                               IsVisible="{Binding IsShapeDrawEligible}" Width="110" Margin="8,0,0,4"
                                               ToolTip.Tip="Freehand paints every tile you drag over; Line/Rectangle preview the whole shape and commit it in one go on release."/>
                                 </WrapPanel>
+                                <Border DockPanel.Dock="Top" IsVisible="{Binding HasAnimalHouseInterior}" Margin="0,0,0,8" Padding="8"
+                                        BorderBrush="Gray" BorderThickness="1" CornerRadius="4">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{Binding AnimalCountLabel}" FontWeight="Bold"/>
+                                        <ItemsControl ItemsSource="{Binding Animals}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Name}" Margin="0,2,0,2"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <ComboBox ItemsSource="{Binding AvailableFarmAnimalTypes}" SelectedItem="{Binding SelectedFarmAnimalType}"
+                                                      PlaceholderText="Animal type" Width="140"/>
+                                            <TextBox Text="{Binding NewAnimalName}" Watermark="Name (optional)" Width="120"/>
+                                            <Button Content="Adopt" Command="{Binding AddAnimalCommand}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.6" TextWrapping="Wrap" Margin="0,6,0,0"
                                            Text="{Binding #FarmMap.Status}"/>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.5" FontSize="11" TextWrapping="Wrap"
                                            Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select. [ / ] resizes the draw brush. Ctrl+C/V/D copy, paste (at the last clicked tile), and duplicate the current selection. 1-6 switch tools, Delete removes the selection, arrow keys nudge it by one tile."/>
                                 <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
-                                                          LocationName="{Binding SelectedLocationName}"
+                                                          LocationName="{Binding MapArtLocationName}"
                                                           FarmMapFileName="{Binding FarmMapFileName}"
                                                           FarmHouseMapFileName="{Binding FarmHouseMapFileName}"
                                                           GreenhouseUnlocked="{Binding GreenhouseUnlocked}"
@@ -741,6 +779,19 @@
                                                    Opacity="0.7" TextWrapping="Wrap" FontSize="11"/>
                                     </StackPanel>
 
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsFertilizeToolActive}">
+                                        <StackPanel Classes="field"><TextBlock Text="Fertilizer"/><ComboBox ItemsSource="{Binding AvailableFertilizers}" SelectedItem="{Binding SelectedFertilizer}" Width="180"/></StackPanel>
+                                        <TextBlock Text="Click the map to till (if needed) and apply. Works on bare or already-planted tilled soil alike - no confirmation needed either way."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6" IsVisible="{Binding IsFurnitureToolActive}">
+                                        <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableFurniture}" SelectedItem="{Binding SelectedFurniture}"
+                                                          FilterMode="Contains" Watermark="Search furniture..."/>
+                                        <TextBlock Text="Click the map to place. Covers chairs/tables/rugs/paintings/decor/etc (328 real pieces) - beds, fish tanks, and the Joja/Wizard/Junimo/Retro theme sets aren't supported yet."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                    </StackPanel>
+
                                     <StackPanel Spacing="6" IsVisible="{Binding IsPlantCropToolActive}">
                                         <AutoCompleteBox ItemsSource="{Binding AvailablePlaceableCrops}" SelectedItem="{Binding SelectedPlaceableCrop}"
                                                           FilterMode="Contains" Watermark="Search seeds..."/>
@@ -750,10 +801,13 @@
                                     </StackPanel>
 
                                     <StackPanel Spacing="6" IsVisible="{Binding IsPlantTreeToolActive}">
-                                        <StackPanel Classes="field"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding AvailableTreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
-                                        <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding PlantTreeGrowthStage}" Minimum="0" Maximum="5" Width="180"/></StackPanel>
-                                        <TextBlock Text="Defaults to fully grown (5) - lower it to plant a sapling instead. Click the map to plant."
+                                        <CheckBox Content="Fruit tree" IsChecked="{Binding IsFruitTreeMode}"/>
+                                        <StackPanel Classes="field" IsVisible="{Binding !IsFruitTreeMode}"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding AvailableTreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
+                                        <StackPanel Classes="field" IsVisible="{Binding !IsFruitTreeMode}"><TextBlock Text="Growth stage"/><ComboBox ItemsSource="{Binding TreeGrowthStages}" SelectedItem="{Binding PlantTreeGrowthStage}" Width="180"/></StackPanel>
+                                        <TextBlock IsVisible="{Binding !IsFruitTreeMode}" Text="Defaults to fully grown (5) - lower it to plant a sapling instead. Click the map to plant."
                                                    Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                        <StackPanel Classes="field" IsVisible="{Binding IsFruitTreeMode}"><TextBlock Text="Fruit"/><ComboBox ItemsSource="{Binding AvailableFruitTreeTypes}" SelectedItem="{Binding SelectedFruitTreeType}" Width="180"/></StackPanel>
+                                        <CheckBox IsVisible="{Binding IsFruitTreeMode}" Content="Plant already matured (fully grown)" IsChecked="{Binding PlantFruitTreeMature}"/>
                                     </StackPanel>
 
                                     <StackPanel Spacing="6" IsVisible="{Binding IsPlantBushToolActive}">
@@ -793,7 +847,7 @@
                                             <DataTemplate DataType="vm:TreeDetailsViewModel">
                                                 <StackPanel Spacing="6">
                                                     <StackPanel Classes="field"><TextBlock Text="Species"/><ComboBox ItemsSource="{Binding TreeTypes}" SelectedItem="{Binding SelectedTreeType}" Width="180"/></StackPanel>
-                                                    <StackPanel Classes="field"><TextBlock Text="Growth stage"/><NumericUpDown Value="{Binding GrowthStage}" Minimum="0" Maximum="5" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Growth stage"/><ComboBox ItemsSource="{Binding TreeGrowthStages}" SelectedItem="{Binding SelectedGrowthStage}" Width="180"/></StackPanel>
                                                     <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="10" Width="180"/></StackPanel>
                                                     <CheckBox Content="Stump" IsChecked="{Binding Stump}"/>
                                                     <CheckBox Content="Tapped" IsChecked="{Binding Tapped}"/>
@@ -847,22 +901,27 @@
 
                                             <DataTemplate DataType="vm:ResourceClumpDetailsViewModel">
                                                 <StackPanel Spacing="6">
-                                                    <StackPanel Classes="field"><TextBlock Text="Sprite index"/><NumericUpDown Value="{Binding ParentSheetIndex}" Minimum="0" Maximum="999" Width="180"/></StackPanel>
+                                                    <StackPanel Classes="field"><TextBlock Text="Type"/><ComboBox ItemsSource="{Binding ResourceClumpTypes}" SelectedItem="{Binding ParentSheetIndex}" Width="180"/></StackPanel>
                                                     <StackPanel Classes="field"><TextBlock Text="Health"/><NumericUpDown Value="{Binding Health}" Minimum="0" Maximum="99" Width="180"/></StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
 
                                             <DataTemplate DataType="vm:PlacedObjectDetailsViewModel">
-                                                <StackPanel Spacing="6" DataContext="{Binding Item}">
-                                                    <Grid Width="40" Height="40" HorizontalAlignment="Left">
-                                                        <Image Source="{Binding Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
-                                                               Width="40" Height="40" Stretch="Uniform"/>
-                                                        <Border Classes="qtyBadge" IsVisible="{Binding IsStackable}">
-                                                            <TextBlock Classes="qtyBadge" Text="{Binding Stack}"/>
-                                                        </Border>
-                                                    </Grid>
-                                                    <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="180" IsEnabled="{Binding IsStackable}"/></StackPanel>
-                                                    <StackPanel Classes="field" IsVisible="{Binding HasQuality}"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180"/></StackPanel>
+                                                <StackPanel Spacing="6">
+                                                    <Button Content="Go to Storage tab" Command="{Binding GoToStorageCommand}" IsVisible="{Binding IsChest}"
+                                                            ToolTip.Tip="Jumps to the Storage tab with this chest already selected."/>
+                                                    <StackPanel Spacing="6" DataContext="{Binding Item}">
+                                                        <Grid Width="40" Height="40" HorizontalAlignment="Left">
+                                                            <Image Source="{Binding Converter={x:Static iconconv:InventoryItemIconConverter.Instance}}"
+                                                                   Width="40" Height="40" Stretch="Uniform"/>
+                                                            <Border Classes="qtyBadge" IsVisible="{Binding IsStackable}">
+                                                                <TextBlock Classes="qtyBadge" Text="{Binding Stack}"/>
+                                                            </Border>
+                                                        </Grid>
+                                                        <StackPanel Classes="field"><TextBlock Text="Stack"/><NumericUpDown Value="{Binding Stack}" Minimum="1" Maximum="{Binding MaximumStackSize}" Width="180" IsEnabled="{Binding IsStackable}"/></StackPanel>
+                                                        <StackPanel Classes="field" IsVisible="{Binding HasQuality}"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180"/></StackPanel>
+                                                        <StackPanel Classes="field" IsVisible="{Binding HasColor}"><TextBlock Text="Dye color"/><ColorPicker Color="{Binding DyeColor}" HorizontalAlignment="Left"/></StackPanel>
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
 
@@ -881,41 +940,54 @@
                                                     <TextBlock Text="Paint color" FontWeight="Bold" Margin="0,6,0,0"/>
                                                     <TextBlock Text="This building has no repaintable texture in the game's own files - painting is a no-op here just like in the real game (only Stable, cabins, Deluxe Barn/Coop, Big Shed and the Farmhouse can be repainted)."
                                                                IsVisible="{Binding !CanBePainted}" Opacity="0.7" FontSize="11" TextWrapping="Wrap"/>
-                                                    <StackPanel Spacing="8" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel" IsVisible="{Binding CanBePainted}">
+                                                    <StackPanel x:Name="PaintColorPanel" Spacing="8" DataContext="{Binding PaintColor}" x:DataType="vm:BuildingPaintColorDetailsViewModel" IsVisible="{Binding CanBePainted}">
                                                         <StackPanel Spacing="2">
                                                             <CheckBox Content="Color 1: default" IsChecked="{Binding Color1Default}"/>
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color1Default}">
-                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color1Hue}" Width="58"/>
-                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color1Saturation}" Width="58"/>
-                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color1Lightness}" Width="58"/>
+                                                                <ColorPicker Color="{Binding Color1}"/>
+                                                                <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
+                                                                <NumericUpDown Value="{Binding Color1Lightness}" Minimum="-100" Maximum="100" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="2">
                                                             <CheckBox Content="Color 2: default" IsChecked="{Binding Color2Default}"/>
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color2Default}">
-                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color2Hue}" Width="58"/>
-                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color2Saturation}" Width="58"/>
-                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color2Lightness}" Width="58"/>
+                                                                <ColorPicker Color="{Binding Color2}"/>
+                                                                <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
+                                                                <NumericUpDown Value="{Binding Color2Lightness}" Minimum="-100" Maximum="100" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="2">
                                                             <CheckBox Content="Color 3: default" IsChecked="{Binding Color3Default}"/>
                                                             <StackPanel Orientation="Horizontal" Spacing="4" IsEnabled="{Binding !Color3Default}">
-                                                                <TextBlock Text="H" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color3Hue}" Width="58"/>
-                                                                <TextBlock Text="S" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color3Saturation}" Width="58"/>
-                                                                <TextBlock Text="L" VerticalAlignment="Center"/>
-                                                                <NumericUpDown Value="{Binding Color3Lightness}" Width="58"/>
+                                                                <ColorPicker Color="{Binding Color3}"/>
+                                                                <TextBlock Text="Lightness" VerticalAlignment="Center" FontSize="11"/>
+                                                                <NumericUpDown Value="{Binding Color3Lightness}" Minimum="-100" Maximum="100" Width="80"/>
                                                             </StackPanel>
                                                         </StackPanel>
-                                                        <TextBlock Text="Hue / Saturation / Lightness - valid range not confirmed against real save data" Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="Lightness is a brightness shift on the building's own shading, not a color - the swatch above previews Hue/Saturation only, at a fixed reference brightness."
+                                                                   Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+
+                                                        <TextBlock Text="Saved styles" FontWeight="Bold" Margin="0,6,0,0"/>
+                                                        <StackPanel Spacing="4">
+                                                            <TextBox Text="{Binding NewStyleName}" Watermark="Style name (optional)" HorizontalAlignment="Stretch"/>
+                                                            <Button Content="Save current as style" Command="{Binding SaveAsStyleCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+                                                        </StackPanel>
+                                                        <ItemsControl ItemsSource="{Binding SavedStyles}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="vm:SavedPaintStyle">
+                                                                    <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2">
+                                                                        <TextBlock Text="{Binding Name}" Width="180" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                                        <Button Content="Apply" Command="{Binding #PaintColorPanel.DataContext.ApplyStyleCommand}" CommandParameter="{Binding}"/>
+                                                                        <Button Command="{Binding #PaintColorPanel.DataContext.DeleteStyleCommand}" CommandParameter="{Binding}">
+                                                                            <controls:StardewIcon Kind="Trash" IconSize="12"/>
+                                                                        </Button>
+                                                                    </StackPanel>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <TextBlock Text="No saved styles yet - paint a building above, then save it to reuse on others." Opacity="0.6" FontSize="11" TextWrapping="Wrap"
+                                                                   IsVisible="{Binding !HasSavedStyles}"/>
                                                     </StackPanel>
 
                                                     <Button Command="{Binding EnterInteriorCommand}" IsVisible="{Binding HasEnterableInterior}" Margin="0,6,0,0" HorizontalAlignment="Left">
@@ -924,14 +996,14 @@
                                                             <controls:StardewIcon Kind="ArrowRight" IconSize="12"/>
                                                         </StackPanel>
                                                     </Button>
-                                                    <TextBlock Text="This building type has an interior, but per-instance Barn/Coop/Shed interiors use an unconfirmed save shape - not editable yet."
+                                                    <TextBlock Text="This building type has an interior, but per-instance Barn/Coop interiors aren't supported yet."
                                                                Opacity="0.7" TextWrapping="Wrap" IsVisible="{Binding HasUnsupportedInstancedInterior}"/>
 
                                                     <Button Content="{Binding NextTier.Name, StringFormat='Upgrade to {0}'}" Command="{Binding UpgradeTierCommand}" IsVisible="{Binding CanUpgrade}" Margin="0,6,0,0"/>
 
                                                     <StackPanel Classes="field" IsVisible="{Binding IsFarmhouse}">
                                                         <TextBlock Text="House upgrade level (kitchen/rooms)"/>
-                                                        <NumericUpDown Value="{Binding HouseUpgradeLevel}" Minimum="0" Maximum="3" Width="180"/>
+                                                        <ComboBox ItemsSource="{Binding HouseUpgradeLevels}" SelectedItem="{Binding HouseUpgradeLevel}" Width="180"/>
                                                     </StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
@@ -961,6 +1033,13 @@
                                                         </ComboBox>
                                                     </StackPanel>
                                                     <TextBlock Text="Joins automatically with adjacent tiles of the same type, like the real game." Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+
+                                            <DataTemplate DataType="vm:FurnitureDetailsViewModel">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+                                                    <TextBlock Text="No editable fields yet beyond position/removal." Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                             </DataTemplate>
 

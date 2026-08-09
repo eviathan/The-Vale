@@ -26,13 +26,16 @@ public sealed record PlaceableCrop(
     bool IsRaisedSeeds,
     double ExtraHarvestChance,
     int SpriteIndex,
-    IReadOnlyList<string> Seasons)
+    IReadOnlyList<string> Seasons,
+    IReadOnlyList<string> TintColors)
 {
-    /// <summary>The crop's own last real growth phase index (DaysInPhase.Length - 1) - what
-    /// "currentPhase" should be to render as fully grown. Distinct from the game's internal
-    /// phaseDays array, which additionally appends a 99999-day "stays forever" sentinel phase
-    /// (see HoeDirtEditor.PlantCrop) - currentPhase never needs to reach that far.</summary>
-    public int MaturePhase => DaysInPhase.Count - 1;
+    /// <summary>What "currentPhase" should be for this crop to render fully grown - confirmed
+    /// against decompiled Crop.growCompletely() (the real game's own "make this instantly ripe"
+    /// method), which sets currentPhase = phaseDays.Count - 1 where phaseDays is the RUNTIME list
+    /// including the appended 99999 "stays forever" sentinel (see HoeDirtEditor.PlantCrop) - i.e.
+    /// DaysInPhase.Count, not DaysInPhase.Count - 1 as an earlier version of this property had it
+    /// (confirmed wrong: that was one growth stage short of true ripeness).</summary>
+    public int MaturePhase => DaysInPhase.Count;
 
     public override string ToString() => Name;
 }
@@ -78,12 +81,15 @@ public static class PlaceableCrops
             var seasons = el.TryGetProperty("Seasons", out var seasonsEl) && seasonsEl.ValueKind == JsonValueKind.Array
                 ? seasonsEl.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
                 : new List<string>();
+            var tintColors = el.TryGetProperty("TintColors", out var tc) && tc.ValueKind == JsonValueKind.Array
+                ? tc.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
+                : new List<string>();
 
             var seedName = itemNames.GetValueOrDefault(seedIndex, $"Seed {seedIndex}");
             var harvestName = itemNames.GetValueOrDefault(harvestItemId, $"Item {harvestItemId}");
 
             result.Add(new PlaceableCrop(seedIndex, seedName, daysInPhase, regrowDays, harvestItemId, harvestName,
-                harvestMin, harvestMax, harvestBonus, isScythe, isRaised, extraChance, spriteIndex, seasons));
+                harvestMin, harvestMax, harvestBonus, isScythe, isRaised, extraChance, spriteIndex, seasons, tintColors));
         }
 
         return result.OrderBy(c => c.Name).ToList();

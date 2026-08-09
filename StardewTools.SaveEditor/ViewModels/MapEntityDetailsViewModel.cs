@@ -4,6 +4,7 @@ using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
+using StardewTools.SaveEditor.MapAssets;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
@@ -46,9 +47,10 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
 {
     public TreeEditor Tree { get; }
     public IReadOnlyList<NamedValue> TreeTypes => GameEnums.TreeTypes;
+    public IReadOnlyList<NamedValue> TreeGrowthStages => GameEnums.TreeGrowthStages;
 
     [ObservableProperty] private NamedValue _selectedTreeType;
-    [ObservableProperty] private int _growthStage;
+    [ObservableProperty] private NamedValue _selectedGrowthStage;
     [ObservableProperty] private int _health;
     [ObservableProperty] private bool _stump;
     [ObservableProperty] private bool _tapped;
@@ -64,7 +66,7 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
     {
         Tree = tree;
         _selectedTreeType = GameEnums.FindOrFirst(GameEnums.TreeTypes, tree.TreeType);
-        _growthStage = tree.GrowthStage;
+        _selectedGrowthStage = GameEnums.FindOrFirst(GameEnums.TreeGrowthStages, tree.GrowthStage);
         _health = tree.Health;
         _stump = tree.Stump;
         _tapped = tree.Tapped;
@@ -77,7 +79,7 @@ public sealed partial class TreeDetailsViewModel : MapEntityDetailsViewModel
     }
 
     partial void OnSelectedTreeTypeChanged(NamedValue value) { Tree.TreeType = value.Value; NotifyEdited(); }
-    partial void OnGrowthStageChanged(int value) { Tree.GrowthStage = value; NotifyEdited(); }
+    partial void OnSelectedGrowthStageChanged(NamedValue value) { Tree.GrowthStage = value.Value; NotifyEdited(); }
     partial void OnHealthChanged(int value) { Tree.Health = value; NotifyEdited(); }
     partial void OnStumpChanged(bool value) { Tree.Stump = value; NotifyEdited(); }
     partial void OnTappedChanged(bool value) { Tree.Tapped = value; NotifyEdited(); }
@@ -201,19 +203,20 @@ public sealed partial class HoeDirtDetailsViewModel : MapEntityDetailsViewModel
 public sealed partial class ResourceClumpDetailsViewModel : MapEntityDetailsViewModel
 {
     public ResourceClumpEditor Clump { get; }
+    public IReadOnlyList<NamedValue> ResourceClumpTypes => GameEnums.ResourceClumpTypes;
 
-    [ObservableProperty] private int _parentSheetIndex;
+    [ObservableProperty] private NamedValue _parentSheetIndex;
     [ObservableProperty] private int _health;
 
     public ResourceClumpDetailsViewModel(MapEntitySummary summary, ResourceClumpEditor clump, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
         : base(summary, onEdited, onRemove)
     {
         Clump = clump;
-        _parentSheetIndex = clump.ParentSheetIndex;
+        _parentSheetIndex = GameEnums.FindOrFirst(GameEnums.ResourceClumpTypes, clump.ParentSheetIndex);
         _health = clump.Health;
     }
 
-    partial void OnParentSheetIndexChanged(int value) { Clump.ParentSheetIndex = value; NotifyEdited(); }
+    partial void OnParentSheetIndexChanged(NamedValue value) { Clump.ParentSheetIndex = value.Value; NotifyEdited(); }
     partial void OnHealthChanged(int value) { Clump.Health = value; NotifyEdited(); }
 
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromClump(Clump);
@@ -221,31 +224,56 @@ public sealed partial class ResourceClumpDetailsViewModel : MapEntityDetailsView
 
 /// <summary>Reuses ItemRowViewModel (Inventory/Storage tabs' own row VM) for the Stack/Quality
 /// fields one binding path deeper (Item.Stack) instead of re-declaring that logic here.</summary>
-public sealed class PlacedObjectDetailsViewModel : MapEntityDetailsViewModel
+public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewModel
 {
+    private readonly Action<ChestEditor> _goToChestInStorage;
+
     public PlacedObjectEditor Placed { get; }
     public ItemRowViewModel Item { get; }
 
-    public PlacedObjectDetailsViewModel(MapEntitySummary summary, PlacedObjectEditor placed, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
+    /// <summary>#6c: only Chest-type placed Objects get a "Go to Storage" shortcut - other
+    /// placed Objects (crafting machines, forageables, ...) have no Storage-tab counterpart.</summary>
+    public bool IsChest => Placed.Item.ItemType == "Chest";
+
+    public PlacedObjectDetailsViewModel(MapEntitySummary summary, PlacedObjectEditor placed, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove, Action<ChestEditor> goToChestInStorage)
         : base(summary, onEdited, onRemove)
     {
         Placed = placed;
+        _goToChestInStorage = goToChestInStorage;
         // The row's own onRemove is unused here - removal goes through this panel's inherited
         // Remove command instead, which removes the whole placed object, not just the item row.
         Item = new ItemRowViewModel(placed.Item, _ => { }, _ => NotifyEdited());
     }
 
+    [RelayCommand]
+    private void GoToStorage() => _goToChestInStorage(Placed.AsChest());
+
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromObject(Placed);
 }
 
 /// <summary>Composition over BuildingEditor.PaintColor, same shape as CropDetailsViewModel's
-/// composition over CropEditor - real, confirmed field names (see BuildingPaintColorEditor),
-/// but no confirmed valid Hue/Saturation/Lightness range, so the AXAML ships these as plain
-/// NumericUpDowns with no Maximum rather than a guessed clamp.</summary>
+/// composition over CropEditor - real, confirmed field names (see BuildingPaintColorEditor).
+/// Hue/Saturation are exposed through a real RGB/HSV ColorPicker instead of raw number inputs -
+/// confirmed real ranges via decompiled Menus/BuildingPaintMenu.cs's own slider construction
+/// (Hue 0-360, Saturation 0-75). Lightness stays a separate slider (-100 to 100, also confirmed
+/// there) rather than folding it into the picked color: the real game applies Hue/Saturation as
+/// an ABSOLUTE color (the paint mask's affected pixels are first reset to grayscale, then Hue/
+/// Saturation set from that zeroed baseline - see BuildingPainter's own remarks) but Lightness as
+/// a RELATIVE shift added on top of each individual pixel's own original shading, so there's no
+/// single final RGB color a picker could represent for it - it's inherently a brightness
+/// adjustment, not a color component, which is also exactly how the real paint menu presents it
+/// (a lightness slider, separate from the hue/saturation color area). The picker's own displayed
+/// swatch uses a fixed reference lightness (0.5) purely for a representative preview - matching
+/// how the real paint menu's swatch/preview rendering ALSO samples HSLtoRGB at a reference
+/// lightness rather than the stored value directly (BuildingPaintMenu.cs's own saved-color-swatch
+/// draw call).</summary>
 public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
 {
+    private const double PreviewLightness = 0.5;
+
     private readonly BuildingPaintColorEditor _paint;
     private readonly Action _onEdited;
+    private bool _isBound;
 
     /// <summary>Real, data-driven (Data/PaintData.json) check, computed once at selection time -
     /// most building types (base Barn/Coop/Shed/Silo/Well/Greenhouse tiers, ...) have no paint
@@ -253,18 +281,20 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
     /// so it doesn't show live-looking HSL controls that silently do nothing for those types.</summary>
     public bool CanBePainted { get; }
 
+    public System.Collections.ObjectModel.ObservableCollection<SavedPaintStyle> SavedStyles => PaintStyleStore.Styles;
+    public bool HasSavedStyles => SavedStyles.Count > 0;
+
     [ObservableProperty] private bool _color1Default;
-    [ObservableProperty] private int _color1Hue;
-    [ObservableProperty] private int _color1Saturation;
+    [ObservableProperty] private Avalonia.Media.Color _color1;
     [ObservableProperty] private int _color1Lightness;
     [ObservableProperty] private bool _color2Default;
-    [ObservableProperty] private int _color2Hue;
-    [ObservableProperty] private int _color2Saturation;
+    [ObservableProperty] private Avalonia.Media.Color _color2;
     [ObservableProperty] private int _color2Lightness;
     [ObservableProperty] private bool _color3Default;
-    [ObservableProperty] private int _color3Hue;
-    [ObservableProperty] private int _color3Saturation;
+    [ObservableProperty] private Avalonia.Media.Color _color3;
     [ObservableProperty] private int _color3Lightness;
+
+    [ObservableProperty] private string _newStyleName = "";
 
     public BuildingPaintColorDetailsViewModel(BuildingPaintColorEditor paint, bool canBePainted, Action onEdited)
     {
@@ -272,31 +302,110 @@ public sealed partial class BuildingPaintColorDetailsViewModel : ViewModelBase
         _onEdited = onEdited;
         CanBePainted = canBePainted;
         _color1Default = paint.Color1Default;
-        _color1Hue = paint.Color1Hue;
-        _color1Saturation = paint.Color1Saturation;
+        _color1 = PreviewColor(paint.Color1Hue, paint.Color1Saturation);
         _color1Lightness = paint.Color1Lightness;
         _color2Default = paint.Color2Default;
-        _color2Hue = paint.Color2Hue;
-        _color2Saturation = paint.Color2Saturation;
+        _color2 = PreviewColor(paint.Color2Hue, paint.Color2Saturation);
         _color2Lightness = paint.Color2Lightness;
         _color3Default = paint.Color3Default;
-        _color3Hue = paint.Color3Hue;
-        _color3Saturation = paint.Color3Saturation;
+        _color3 = PreviewColor(paint.Color3Hue, paint.Color3Saturation);
         _color3Lightness = paint.Color3Lightness;
+        _isBound = true;
+    }
+
+    private static Avalonia.Media.Color PreviewColor(int hue, int saturation)
+    {
+        HslConversion.HslToRgb(hue, Math.Clamp(saturation, 0, 75) / 100.0, PreviewLightness, out var r, out var g, out var b);
+        return Avalonia.Media.Color.FromRgb(r, g, b);
+    }
+
+    private static (int Hue, int Saturation) ToHueSaturation(Avalonia.Media.Color color)
+    {
+        HslConversion.RgbToHsl(color.R, color.G, color.B, out var h, out var s, out _);
+        return ((int)Math.Round(h), Math.Clamp((int)Math.Round(s * 100), 0, 75));
     }
 
     partial void OnColor1DefaultChanged(bool value) { _paint.Color1Default = value; _onEdited(); }
-    partial void OnColor1HueChanged(int value) { _paint.Color1Hue = value; _onEdited(); }
-    partial void OnColor1SaturationChanged(int value) { _paint.Color1Saturation = value; _onEdited(); }
+    partial void OnColor1Changed(Avalonia.Media.Color value)
+    {
+        if (!_isBound) return;
+        var (h, s) = ToHueSaturation(value);
+        _paint.Color1Hue = h;
+        _paint.Color1Saturation = s;
+        _onEdited();
+    }
     partial void OnColor1LightnessChanged(int value) { _paint.Color1Lightness = value; _onEdited(); }
+
     partial void OnColor2DefaultChanged(bool value) { _paint.Color2Default = value; _onEdited(); }
-    partial void OnColor2HueChanged(int value) { _paint.Color2Hue = value; _onEdited(); }
-    partial void OnColor2SaturationChanged(int value) { _paint.Color2Saturation = value; _onEdited(); }
+    partial void OnColor2Changed(Avalonia.Media.Color value)
+    {
+        if (!_isBound) return;
+        var (h, s) = ToHueSaturation(value);
+        _paint.Color2Hue = h;
+        _paint.Color2Saturation = s;
+        _onEdited();
+    }
     partial void OnColor2LightnessChanged(int value) { _paint.Color2Lightness = value; _onEdited(); }
+
     partial void OnColor3DefaultChanged(bool value) { _paint.Color3Default = value; _onEdited(); }
-    partial void OnColor3HueChanged(int value) { _paint.Color3Hue = value; _onEdited(); }
-    partial void OnColor3SaturationChanged(int value) { _paint.Color3Saturation = value; _onEdited(); }
+    partial void OnColor3Changed(Avalonia.Media.Color value)
+    {
+        if (!_isBound) return;
+        var (h, s) = ToHueSaturation(value);
+        _paint.Color3Hue = h;
+        _paint.Color3Saturation = s;
+        _onEdited();
+    }
     partial void OnColor3LightnessChanged(int value) { _paint.Color3Lightness = value; _onEdited(); }
+
+    /// <summary>Snapshots the current 3-slot paint job (every Default flag + Hue/Saturation/
+    /// Lightness, not just the picker-visible parts) as a reusable named style - persisted via
+    /// AppSettings, same pattern as MapTabViewModel's RecentPlaceableItems.</summary>
+    [RelayCommand]
+    private void SaveAsStyle()
+    {
+        var name = string.IsNullOrWhiteSpace(NewStyleName) ? $"Style {SavedStyles.Count + 1}" : NewStyleName.Trim();
+        PaintStyleStore.Add(new SavedPaintStyle(name,
+            Color1Default, _paint.Color1Hue, _paint.Color1Saturation, Color1Lightness,
+            Color2Default, _paint.Color2Hue, _paint.Color2Saturation, Color2Lightness,
+            Color3Default, _paint.Color3Hue, _paint.Color3Saturation, Color3Lightness));
+        NewStyleName = "";
+        OnPropertyChanged(nameof(SavedStyles));
+        OnPropertyChanged(nameof(HasSavedStyles));
+    }
+
+    /// <summary>Applies every field from a saved style onto this paint job in one shot.</summary>
+    [RelayCommand]
+    private void ApplyStyle(SavedPaintStyle style)
+    {
+        Color1Default = style.Color1Default;
+        Color1 = PreviewColor(style.Color1Hue, style.Color1Saturation);
+        _paint.Color1Hue = style.Color1Hue;
+        _paint.Color1Saturation = style.Color1Saturation;
+        Color1Lightness = style.Color1Lightness;
+
+        Color2Default = style.Color2Default;
+        Color2 = PreviewColor(style.Color2Hue, style.Color2Saturation);
+        _paint.Color2Hue = style.Color2Hue;
+        _paint.Color2Saturation = style.Color2Saturation;
+        Color2Lightness = style.Color2Lightness;
+
+        Color3Default = style.Color3Default;
+        Color3 = PreviewColor(style.Color3Hue, style.Color3Saturation);
+        _paint.Color3Hue = style.Color3Hue;
+        _paint.Color3Saturation = style.Color3Saturation;
+        Color3Lightness = style.Color3Lightness;
+
+        _onEdited();
+    }
+
+    [RelayCommand]
+    private void DeleteStyle(SavedPaintStyle style)
+    {
+        PaintStyleStore.Remove(style);
+        OnPropertyChanged(nameof(SavedStyles));
+        OnPropertyChanged(nameof(HasSavedStyles));
+    }
 }
 
 /// <summary>Skin (see BuildingEditor.SkinId) plus the confirmed real spec fields (capacity,
@@ -313,7 +422,8 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
 {
     private const string DefaultSkinLabel = "(Default)";
 
-    private readonly Action<string> _enterLocation;
+    private readonly Action<string, string?> _enterLocation;
+    private readonly Action<BuildingEditor> _enterBuildingInterior;
     private readonly Action<int> _setHouseUpgradeLevel;
 
     public BuildingEditor Building { get; }
@@ -330,7 +440,8 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     [ObservableProperty] private int _daysOfConstructionLeft;
     [ObservableProperty] private bool _magical;
     [ObservableProperty] private bool _animalDoorOpen;
-    [ObservableProperty] private int _houseUpgradeLevel;
+    [ObservableProperty] private NamedValue _houseUpgradeLevel;
+    public IReadOnlyList<NamedValue> HouseUpgradeLevels => GameEnums.HouseUpgradeLevels;
 
     public bool IsFarmhouse => Building.BuildingType == "Farmhouse";
 
@@ -338,7 +449,7 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     /// covers both the confirmed-editable (non-instanced) and unconfirmed (instanced) cases;
     /// see HasEnterableInterior/HasUnsupportedInstancedInterior for which is which.</summary>
     public bool HasInterior => MapAssets.BuildingsData.HasInterior(Building.BuildingType);
-    public bool HasEnterableInterior => Building.NonInstancedIndoorsName is not null;
+    public bool HasEnterableInterior => Building.NonInstancedIndoorsName is not null || Building.HasNestedIndoors;
     public bool HasUnsupportedInstancedInterior => HasInterior && !HasEnterableInterior;
 
     public MapAssets.BuildingTierInfo? NextTier => MapAssets.BuildingsData.NextTier(Building.BuildingType);
@@ -351,11 +462,12 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     public bool CanBePainted { get; }
 
     public BuildingDetailsViewModel(MapEntitySummary summary, BuildingEditor building, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove,
-        Action<string> enterLocation, Func<int> getHouseUpgradeLevel, Action<int> setHouseUpgradeLevel)
+        Action<string, string?> enterLocation, Action<BuildingEditor> enterBuildingInterior, Func<int> getHouseUpgradeLevel, Action<int> setHouseUpgradeLevel)
         : base(summary, onEdited, onRemove)
     {
         Building = building;
         _enterLocation = enterLocation;
+        _enterBuildingInterior = enterBuildingInterior;
         _setHouseUpgradeLevel = setHouseUpgradeLevel;
         AvailableSkins = new[] { DefaultSkinLabel }.Concat(MapAssets.BuildingSprites.SkinsFor(building.BuildingType)).ToList();
         _selectedSkin = building.SkinId ?? DefaultSkinLabel;
@@ -364,7 +476,7 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
         _daysOfConstructionLeft = building.DaysOfConstructionLeft;
         _magical = building.Magical;
         _animalDoorOpen = building.AnimalDoorOpen;
-        _houseUpgradeLevel = getHouseUpgradeLevel();
+        _houseUpgradeLevel = GameEnums.FindOrFirst(GameEnums.HouseUpgradeLevels, getHouseUpgradeLevel());
         CanBePainted = MapAssets.BuildingSprites.CanBePainted(building.BuildingType, building.SkinId);
         PaintColor = new BuildingPaintColorDetailsViewModel(building.PaintColor, CanBePainted, NotifyEdited);
     }
@@ -384,13 +496,15 @@ public sealed partial class BuildingDetailsViewModel : MapEntityDetailsViewModel
     /// <summary>Only meaningful when IsFarmhouse - writes through to Player.HouseUpgradeLevel
     /// via the delegate rather than touching Building/the interior location at all (see class
     /// remarks on why this isn't a Building field).</summary>
-    partial void OnHouseUpgradeLevelChanged(int value) => _setHouseUpgradeLevel(value);
+    partial void OnHouseUpgradeLevelChanged(NamedValue value) => _setHouseUpgradeLevel(value.Value);
 
     [RelayCommand(CanExecute = nameof(HasEnterableInterior))]
     private void EnterInterior()
     {
         if (Building.NonInstancedIndoorsName is { } name)
-            _enterLocation(name);
+            _enterLocation(name, null);
+        else if (Building.HasNestedIndoors)
+            _enterBuildingInterior(Building);
     }
 
     [RelayCommand(CanExecute = nameof(CanUpgrade))]
@@ -469,4 +583,21 @@ public sealed partial class FlooringDetailsViewModel : MapEntityDetailsViewModel
     partial void OnSelectedFloorTypeChanged(MapAssets.FloorPathData value) { Flooring.WhichFloor = value.Key; NotifyEdited(); }
 
     public override MapEntitySummary Resummarize() => MapEntitySummary.FromFlooring(Flooring);
+}
+
+/// <summary>No editable fields yet beyond removal - rotation/held-item editing would need the
+/// per-type rotation-frame layout (decompiled Furniture.rotate()), not modeled here (see
+/// PlaceableFurniture remarks for this pass's scope).</summary>
+public sealed partial class FurnitureDetailsViewModel : MapEntityDetailsViewModel
+{
+    public FurnitureEditor Furniture { get; }
+    public string Name => MapAssets.PlaceableFurnitureCatalog.NameFor(Furniture.FurnitureId);
+
+    public FurnitureDetailsViewModel(MapEntitySummary summary, FurnitureEditor furniture, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove)
+        : base(summary, onEdited, onRemove)
+    {
+        Furniture = furniture;
+    }
+
+    public override MapEntitySummary Resummarize() => MapEntitySummary.FromFurniture(Furniture);
 }

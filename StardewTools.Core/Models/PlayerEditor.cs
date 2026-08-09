@@ -180,6 +180,11 @@ public sealed class PlayerEditor
         set => _element.SetChildText("name", value);
     }
 
+    /// <summary>Real, confirmed field (PascalCase, unlike most others here) - a FarmAnimal's
+    /// ownerID references this. Read-only: this is the farmer's own network identity, not
+    /// something a save editor should let the user casually change.</summary>
+    public long UniqueMultiplayerId => long.Parse(_element.GetChildText("UniqueMultiplayerID"));
+
     public int Money
     {
         get => _element.GetChildInt("money");

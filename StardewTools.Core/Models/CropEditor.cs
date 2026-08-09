@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Xml.Linq;
 using StardewTools.Core.Serialization;
 
@@ -84,4 +85,22 @@ public sealed class CropEditor
 
     /// <summary>Row in the crops sprite sheet - defines crop identity, read-only.</summary>
     public int RowInSpriteSheet => _crop.GetChildInt("rowInSpriteSheet");
+
+    /// <summary>Real growth-phase count, excluding the trailing 99999 "stays forever" sentinel
+    /// HoeDirtEditor.PlantCrop always appends (i.e. Data/Crops.json's own DaysInPhase.Length) -
+    /// CurrentPhase == PhaseCount is "fully grown" for rendering purposes (confirmed against
+    /// decompiled Crop.growCompletely()/draw() - both compare against phaseDays.Count - 1 using
+    /// the RUNTIME phaseDays list, which already includes the sentinel this property excludes,
+    /// so the two counts land on the same value here).</summary>
+    public int PhaseCount => (_crop.Element("phaseDays")?.Elements("int").Count() ?? 1) - 1;
+
+    /// <summary>Whether TintColor should be drawn as a colored overlay on top of the base sprite
+    /// - real flowers (Tulip, Poppy, Blue Jazz, Summer Spangle, Fairy Rose) set this true with a
+    /// randomly-chosen color from Data/Crops.json's TintColors list at plant time (decompiled
+    /// Crop.ResetSeasonsToGrowIn/constructor); every other crop leaves it false. Only meaningful
+    /// once CurrentPhase == PhaseCount and the crop isn't dead (decompiled Crop.draw()).</summary>
+    public bool ProgramColored => _crop.GetChildBool("programColored");
+
+    /// <summary>Real Color field shape - see XElementExtensions.TryGetChildColor remarks.</summary>
+    public (byte R, byte G, byte B, byte A)? TintColor => _crop.TryGetChildColor("tintColor");
 }

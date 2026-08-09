@@ -24,6 +24,20 @@ public partial class SaveEditorViewModel : ViewModelBase
     [ObservableProperty] private bool _canUndo;
     [ObservableProperty] private bool _canRedo;
 
+    /// <summary>Drives the main TabControl's SelectedIndex (MainWindow.axaml) - unbound by
+    /// default (no VM-side tab switching existed before #6c's "select a chest on the map, jump to
+    /// its contents on Storage" navigation needed one). Index is positional, not name-keyed - see
+    /// StorageTabIndex remarks for why that coupling is called out explicitly rather than hidden.</summary>
+    [ObservableProperty] private int _selectedTabIndex;
+
+    /// <summary>The Storage tab's position among the main TabControl's direct TabItem children
+    /// (MainWindow.axaml) - Player=0, Inventory=1, Stats=2, Achievements=3, Recipes=4,
+    /// Collections=5, Powers=6, Quests=7, Relationships=8, Storage=9, Farm=10, Map=11. There's no
+    /// name-based tab lookup in this app (a plain Avalonia TabControl, no x:Name'd TabItems), so
+    /// this index must be kept in sync by hand if a tab is ever added/removed/reordered - flagged
+    /// here specifically because it's the one place outside the XAML itself that depends on it.</summary>
+    private const int StorageTabIndex = 9;
+
     public SaveEditorViewModel()
     {
         _undo = new UndoManager(OnUndoRedoRestore);
@@ -38,6 +52,14 @@ public partial class SaveEditorViewModel : ViewModelBase
         // Map tab's state (Entities, rendering) - this callback is the one place those two meet.
         Farm.RegenerateConfirmed += save => Map.RegenerateFarmContent(save);
         Farm.GreenhouseUnlockedChanged += value => Map.GreenhouseUnlocked = value;
+
+        // #6c: a chest selected on the Map tab can jump straight to its contents here, instead of
+        // scrolling through the Storage tab's full chest list to find the right one.
+        Map.GoToChestInStorage += chest =>
+        {
+            if (Storage.SelectChest(chest))
+                SelectedTabIndex = StorageTabIndex;
+        };
     }
 
     public PlayerTabViewModel Player { get; } = new();

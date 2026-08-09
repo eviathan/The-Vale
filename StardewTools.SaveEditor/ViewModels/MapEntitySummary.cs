@@ -12,6 +12,8 @@ public enum MapEntityKind
     Building,
     Bush,
     Flooring,
+    FruitTree,
+    Furniture,
 }
 
 /// <summary>
@@ -109,6 +111,24 @@ public sealed class MapEntitySummary
         Source = bush,
         Width = FootprintWidth(bush.Size),
         Height = 1,
+    };
+
+    public static MapEntitySummary FromFruitTree(FruitTreeEditor fruitTree) => new()
+    {
+        Position = fruitTree.Position,
+        Kind = MapEntityKind.FruitTree,
+        Label = $"{MapAssets.PlaceableFruitTrees.NameFor(fruitTree.TreeId)} tree (stage {fruitTree.GrowthStage}){(fruitTree.Stump ? " [stump]" : "")}",
+        ColorHex = "#F06292",
+        Source = fruitTree,
+    };
+
+    public static MapEntitySummary FromFurniture(FurnitureEditor furniture) => new()
+    {
+        Position = furniture.Position,
+        Kind = MapEntityKind.Furniture,
+        Label = MapAssets.PlaceableFurnitureCatalog.NameFor(furniture.FurnitureId),
+        ColorHex = "#8D6E63",
+        Source = furniture,
     };
 
     public static MapEntitySummary FromFlooring(FlooringEditor flooring) => new()

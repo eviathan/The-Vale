@@ -15,6 +15,27 @@ public sealed class RecentPlaceableItemRef
     public bool IsBigCraftable { get; set; }
 }
 
+/// <summary>A reusable named building-paint job - every real BuildingPaintColorEditor field
+/// across all 3 slots, so applying a saved style reproduces the paint job exactly, not just the
+/// picker-visible Hue/Saturation. See PaintStyleStore/SavedPaintStyle (ViewModels layer) for the
+/// live in-memory view this backs.</summary>
+public sealed class SavedPaintStyleRef
+{
+    public string Name { get; set; } = "";
+    public bool Color1Default { get; set; }
+    public int Color1Hue { get; set; }
+    public int Color1Saturation { get; set; }
+    public int Color1Lightness { get; set; }
+    public bool Color2Default { get; set; }
+    public int Color2Hue { get; set; }
+    public int Color2Saturation { get; set; }
+    public int Color2Lightness { get; set; }
+    public bool Color3Default { get; set; }
+    public int Color3Hue { get; set; }
+    public int Color3Saturation { get; set; }
+    public int Color3Lightness { get; set; }
+}
+
 /// <summary>
 /// Small local settings file for things that should survive across app launches but aren't
 /// part of any save - currently just the Map tab's extracted-assets folder path. Stored
@@ -28,6 +49,10 @@ public sealed class AppSettings
     /// <summary>Most-recently-placed object-picker items, newest first - see MapTabViewModel's
     /// RecentPlaceableItems (in-memory, live view) and RecordRecentlyUsedItem (what pushes here).</summary>
     public List<RecentPlaceableItemRef> RecentPlaceableItems { get; set; } = new();
+
+    /// <summary>User-saved building paint jobs, reusable across any paintable building - see
+    /// PaintStyleStore (ViewModels layer).</summary>
+    public List<SavedPaintStyleRef> PaintStyles { get; set; } = new();
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

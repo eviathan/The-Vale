@@ -11,7 +11,7 @@ using StardewTools.SaveEditor.MapAssets;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
-public enum PlacementTool { None, Object, Building, Till, PlantCrop, PlantTree, PlantBush }
+public enum PlacementTool { None, Object, Building, Till, PlantCrop, PlantTree, PlantBush, Fertilize, Furniture }
 
 /// <summary>How a brush-stroke tool (Object/Till/Plant Crop/Plant Tree - not Building/Plant Bush,
 /// which always keep their own real footprint) turns a drag into a set of tiles to act on.
@@ -150,16 +150,36 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty] private bool _plantCropMature = true;
 
     [ObservableProperty] private NamedValue _selectedTreeType = GameEnums.TreeTypes[0];
+    public IReadOnlyList<NamedValue> TreeGrowthStages => GameEnums.TreeGrowthStages;
 
     /// <summary>0-5, default 5 (adult - see TreeEditor.GrowthStage remarks) - "just plant
     /// already matured trees" by default, but still adjustable for a sapling/etc.</summary>
-    [ObservableProperty] private int _plantTreeGrowthStage = 5;
+    [ObservableProperty] private NamedValue _plantTreeGrowthStage = GameEnums.TreeGrowthStages[5];
+
+    /// <summary>Whether the Plant Tree tool plants a real fruit tree (Cherry/Apricot/Orange/
+    /// Peach/Pomegranate/Apple/Banana/Mango - PlaceableFruitTrees.All) instead of a wild one -
+    /// same tool, same tile-brush mechanics, just a different underlying save shape (FruitTreeEditor
+    /// vs TreeEditor) and picker list.</summary>
+    [ObservableProperty] private bool _isFruitTreeMode;
+    [ObservableProperty] private PlaceableFruitTree? _selectedFruitTreeType = PlaceableFruitTrees.All.FirstOrDefault();
+    public IReadOnlyList<PlaceableFruitTree> AvailableFruitTreeTypes => PlaceableFruitTrees.All;
+
+    /// <summary>Mirrors PlantTreeGrowthStage's "just plant already matured" default, but for
+    /// fruit trees specifically - growthStage 0-3 (seed/sprout/sapling/bush) or 4 (fully grown).
+    /// See FruitTreeEditor.GrowthStage remarks for the real stage constants.</summary>
+    [ObservableProperty] private bool _plantFruitTreeMature = true;
 
     [ObservableProperty] private NamedValue _selectedBushSize = GameEnums.BushSizes[1];
 
     /// <summary>Whether a newly-planted bush starts bloom/harvest-ready (TileSheetOffset 1) -
     /// same "just plant already matured" default as crops/trees.</summary>
     [ObservableProperty] private bool _plantBushMature = true;
+
+    [ObservableProperty] private PlaceableFertilizer? _selectedFertilizer = PlaceableFertilizers.All.FirstOrDefault();
+    public IReadOnlyList<PlaceableFertilizer> AvailableFertilizers => PlaceableFertilizers.All;
+
+    [ObservableProperty] private PlaceableFurniture? _selectedFurniture;
+    public IReadOnlyList<PlaceableFurniture> AvailablePlaceableFurniture => PlaceableFurnitureCatalog.All;
 
     /// <summary>Player.Stats.DaysPlayed - only needed for a placed tea bush's age-based growth
     /// sprite (see BushEditor.DatePlanted / FarmMapControl.CurrentDaysPlayed). Set once in Bind()
@@ -188,8 +208,18 @@ public partial class MapTabViewModel : ViewModelBase
     /// the building's own size for the Building tool, BrushSize for everything else. Purely a
     /// rendering hint (OneWay to the control); BrushSize itself is what OnClickedTileChanged
     /// actually stamps with.</summary>
-    public int HoverFootprintWidth => PlacementTool == PlacementTool.Building ? SelectedPlaceableBuilding?.TilesWide ?? 1 : BrushSize;
-    public int HoverFootprintHeight => PlacementTool == PlacementTool.Building ? SelectedPlaceableBuilding?.TilesHigh ?? 1 : BrushSize;
+    public int HoverFootprintWidth => PlacementTool switch
+    {
+        PlacementTool.Building => SelectedPlaceableBuilding?.TilesWide ?? 1,
+        PlacementTool.Furniture => SelectedFurniture is { } f ? Math.Max(1, f.BoundingWidth / 64) : 1,
+        _ => BrushSize,
+    };
+    public int HoverFootprintHeight => PlacementTool switch
+    {
+        PlacementTool.Building => SelectedPlaceableBuilding?.TilesHigh ?? 1,
+        PlacementTool.Furniture => SelectedFurniture is { } f ? Math.Max(1, f.BoundingHeight / 64) : 1,
+        _ => BrushSize,
+    };
 
     /// <summary>Set by FarmMapControl (OneWayToSource) once a drag that started on an existing
     /// entity finishes - see OnMoveRequestChanged.</summary>
@@ -219,7 +249,7 @@ public partial class MapTabViewModel : ViewModelBase
 
     /// <summary>Whether the current tool supports Line/Rectangle draw shapes at all - drives
     /// whether the shape toggle is shown/enabled in the toolbar.</summary>
-    public bool IsShapeDrawEligible => PlacementTool is PlacementTool.Object or PlacementTool.Till or PlacementTool.PlantCrop or PlacementTool.PlantTree;
+    public bool IsShapeDrawEligible => PlacementTool is PlacementTool.Object or PlacementTool.Till or PlacementTool.PlantCrop or PlacementTool.PlantTree or PlacementTool.Fertilize;
 
     public static IReadOnlyList<DrawShape> DrawShapeOptions { get; } = Enum.GetValues<DrawShape>();
 
@@ -275,6 +305,18 @@ public partial class MapTabViewModel : ViewModelBase
         set => PlacementTool = value ? PlacementTool.PlantBush : PlacementTool.None;
     }
 
+    public bool IsFertilizeToolActive
+    {
+        get => PlacementTool == PlacementTool.Fertilize;
+        set => PlacementTool = value ? PlacementTool.Fertilize : PlacementTool.None;
+    }
+
+    public bool IsFurnitureToolActive
+    {
+        get => PlacementTool == PlacementTool.Furniture;
+        set => PlacementTool = value ? PlacementTool.Furniture : PlacementTool.None;
+    }
+
     /// <summary>Drives FarmMapControl.IsPlacementToolActive - whether any draw tool is armed,
     /// so a click-and-drag paints instead of marquee-selecting.</summary>
     public bool IsAnyToolActive => PlacementTool != PlacementTool.None;
@@ -288,12 +330,20 @@ public partial class MapTabViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsPlantCropToolActive));
         OnPropertyChanged(nameof(IsPlantTreeToolActive));
         OnPropertyChanged(nameof(IsPlantBushToolActive));
+        OnPropertyChanged(nameof(IsFertilizeToolActive));
+        OnPropertyChanged(nameof(IsFurnitureToolActive));
         OnPropertyChanged(nameof(IsAnyToolActive));
         OnPropertyChanged(nameof(HoverFootprintWidth));
         OnPropertyChanged(nameof(HoverFootprintHeight));
     }
 
     partial void OnSelectedPlaceableBuildingChanged(PlaceableBuilding? value)
+    {
+        OnPropertyChanged(nameof(HoverFootprintWidth));
+        OnPropertyChanged(nameof(HoverFootprintHeight));
+    }
+
+    partial void OnSelectedFurnitureChanged(PlaceableFurniture? value)
     {
         OnPropertyChanged(nameof(HoverFootprintWidth));
         OnPropertyChanged(nameof(HoverFootprintHeight));
@@ -325,6 +375,50 @@ public partial class MapTabViewModel : ViewModelBase
 
     public ObservableCollection<MapEntitySummary> Entities { get; } = new();
     public ObservableCollection<string> AvailableLocations { get; } = new();
+
+    /// <summary>Animals living in whatever location is currently selected - empty outside a
+    /// Barn/Coop's interior. A real ObservableCollection mutated in place (Add on adoption), not
+    /// a plain list re-fetched via a getter - see PaintStyleStore's own remarks for why a plain
+    /// List behind a property getter silently stops refreshing a bound ItemsControl.</summary>
+    public ObservableCollection<FarmAnimalEditor> Animals { get; } = new();
+
+    public bool HasAnimalHouseInterior => (_map?.AnimalLimit ?? 0) > 0;
+    public string AnimalCountLabel => $"Animals ({Animals.Count} / {_map?.AnimalLimit ?? 0})";
+
+    /// <summary>"Barn" or "Coop" - which PlaceableFarmAnimal.House category the current
+    /// interior's own real map name (FarmMapEditor.Name - "Barn"/"Barn2"/"Barn3"/"Coop"/"Coop2"/
+    /// "Coop3") accepts. Null outside an animal-house interior.</summary>
+    public string? AnimalHouseCategory => _map?.Name switch
+    {
+        { } n when n.StartsWith("Barn", StringComparison.Ordinal) => "Barn",
+        { } n when n.StartsWith("Coop", StringComparison.Ordinal) => "Coop",
+        _ => null,
+    };
+
+    public IReadOnlyList<PlaceableFarmAnimal> AvailableFarmAnimalTypes
+        => AnimalHouseCategory is { } category
+            ? PlaceableFarmAnimals.All.Where(a => a.House == category).ToList()
+            : Array.Empty<PlaceableFarmAnimal>();
+
+    [ObservableProperty] private PlaceableFarmAnimal? _selectedFarmAnimalType;
+    [ObservableProperty] private string _newAnimalName = "";
+
+    public bool CanAddAnimal => HasAnimalHouseInterior && SelectedFarmAnimalType is not null && Animals.Count < (_map?.AnimalLimit ?? 0);
+
+    [RelayCommand(CanExecute = nameof(CanAddAnimal))]
+    private void AddAnimal()
+    {
+        if (_map is null || _save is null || SelectedFarmAnimalType is not { } type)
+            return;
+
+        var name = string.IsNullOrWhiteSpace(NewAnimalName) ? type.Type : NewAnimalName.Trim();
+        var animal = _map.AddAnimal(type.Type, AnimalHouseCategory ?? type.House, name, _save.Player.UniqueMultiplayerId);
+        Animals.Add(animal);
+        NewAnimalName = "";
+        OnPropertyChanged(nameof(AnimalCountLabel));
+        OnPropertyChanged(nameof(CanAddAnimal));
+        AddAnimalCommand.NotifyCanExecuteChanged();
+    }
 
     public const string AllCategoriesFilter = "All";
 
@@ -426,15 +520,45 @@ public partial class MapTabViewModel : ViewModelBase
         var settings = AppSettings.Load();
         settings.MapContentFolder = value;
         settings.Save();
-        TryLoadTmxMap();
+        TryLoadTmxMap(MapArtLocationName);
+    }
+
+    private string _mapArtLocationName = "Farm";
+
+    /// <summary>The real map/tile-art name to load for whatever's currently selected - explicitly
+    /// set alongside every SelectedLocationName change (see OnSelectedLocationNameChanged/Bind),
+    /// never just derived from ambient state, since "which real name to use" genuinely differs by
+    /// case: the resolved location's own real GameLocation.name (FarmMapEditor.Name) when one
+    /// resolves, or SelectedLocationName itself passed straight through for the "genuinely
+    /// unresolvable, read-only" case (Town/Beach - real locations with no placed-entity modeling
+    /// here, never a synthetic key since only EnterBuildingInterior produces those and that always
+    /// resolves). Distinct from SelectedLocationName because that's a lookup KEY, not necessarily
+    /// a real map name - a building interior's key is synthetic (see SaveGameEditor.
+    /// BuildingInteriorLocationName), and using it directly here (as this tool briefly did) tries
+    /// to load a map file literally named "__indoors__{guid}", which doesn't exist -
+    /// FarmMapControl then falls back to its plain abstract-view background instead of the
+    /// building's real interior art, and this same class's own _tmxMap (used for placement-rule
+    /// checks) silently comes back null too. Bound directly by FarmMapControl.LocationName in
+    /// MainWindow.axaml, not SelectedLocationName.</summary>
+    public string MapArtLocationName
+    {
+        get => _mapArtLocationName;
+        private set
+        {
+            if (_mapArtLocationName == value)
+                return;
+            _mapArtLocationName = value;
+            OnPropertyChanged(nameof(MapArtLocationName));
+        }
     }
 
     /// <summary>Own, render-independent parse of the current location's map, used only to check
     /// real placement rules (CanPlaceFootprint) - best-effort, same as FarmMapControl's own
     /// loader: a missing/unreadable map just means placement checks are skipped (CanPlaceFootprint
     /// returns true, i.e. no restriction) rather than blocking the whole tab.</summary>
-    private void TryLoadTmxMap()
+    private void TryLoadTmxMap(string mapName)
     {
+        MapArtLocationName = mapName;
         _tmxMap = null;
         if (string.IsNullOrWhiteSpace(ContentFolder))
             return;
@@ -442,8 +566,8 @@ public partial class MapTabViewModel : ViewModelBase
         try
         {
             var loader = new MapAssetLoader(ContentFolder);
-            if (loader.HasMap(SelectedLocationName))
-                _tmxMap = loader.LoadMap(SelectedLocationName);
+            if (loader.HasMap(mapName))
+                _tmxMap = loader.LoadMap(mapName);
         }
         catch
         {
@@ -527,10 +651,11 @@ public partial class MapTabViewModel : ViewModelBase
             { Kind: MapEntityKind.Grass, Source: GrassEditor g } => new GrassDetailsViewModel(value, g, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.HoeDirt, Source: HoeDirtEditor d } => new HoeDirtDetailsViewModel(value, d, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.ResourceClump, Source: ResourceClumpEditor c } => new ResourceClumpDetailsViewModel(value, c, OnEntityEdited, RemoveEntity),
-            { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity),
-            { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity, EnterLocation, () => HouseUpgradeLevel, v => HouseUpgradeLevel = v),
+            { Kind: MapEntityKind.Object, Source: PlacedObjectEditor o } => new PlacedObjectDetailsViewModel(value, o, OnEntityEdited, RemoveEntity, RequestGoToChestInStorage),
+            { Kind: MapEntityKind.Building, Source: BuildingEditor b } => new BuildingDetailsViewModel(value, b, OnEntityEdited, RemoveEntity, EnterLocation, EnterBuildingInterior, () => HouseUpgradeLevel, v => HouseUpgradeLevel = v),
             { Kind: MapEntityKind.Bush, Source: BushEditor bu } => new BushDetailsViewModel(value, bu, OnEntityEdited, RemoveEntity),
             { Kind: MapEntityKind.Flooring, Source: FlooringEditor fl } => new FlooringDetailsViewModel(value, fl, OnEntityEdited, RemoveEntity),
+            { Kind: MapEntityKind.Furniture, Source: FurnitureEditor fu } => new FurnitureDetailsViewModel(value, fu, OnEntityEdited, RemoveEntity),
             _ => null,
         };
     }
@@ -558,6 +683,7 @@ public partial class MapTabViewModel : ViewModelBase
         switch (entity.Source)
         {
             case TreeEditor tree: _map.Remove(tree); break;
+            case FruitTreeEditor fruitTree: _map.Remove(fruitTree); break;
             case GrassEditor grass: _map.Remove(grass); break;
             case HoeDirtEditor dirt: _map.Remove(dirt); break;
             case ResourceClumpEditor clump: _map.Remove(clump); break;
@@ -565,6 +691,7 @@ public partial class MapTabViewModel : ViewModelBase
             case BuildingEditor building: _map.Remove(building); break;
             case BushEditor bush: _map.Remove(bush); break;
             case FlooringEditor flooring: _map.Remove(flooring); break;
+            case FurnitureEditor furniture: _map.Remove(furniture); break;
         }
     }
 
@@ -776,6 +903,7 @@ public partial class MapTabViewModel : ViewModelBase
     {
         var entities = new List<MapEntitySummary>();
         foreach (var tree in map.Trees) entities.Add(MapEntitySummary.FromTree(tree));
+        foreach (var fruitTree in map.FruitTrees) entities.Add(MapEntitySummary.FromFruitTree(fruitTree));
         foreach (var grass in map.Grass) entities.Add(MapEntitySummary.FromGrass(grass));
         foreach (var dirt in map.HoeDirtTiles) entities.Add(MapEntitySummary.FromHoeDirt(dirt));
         foreach (var clump in map.ResourceClumps) entities.Add(MapEntitySummary.FromClump(clump));
@@ -783,6 +911,7 @@ public partial class MapTabViewModel : ViewModelBase
         foreach (var bush in map.Bushes) entities.Add(MapEntitySummary.FromBush(bush));
         foreach (var flooring in map.Flooring) entities.Add(MapEntitySummary.FromFlooring(flooring));
         foreach (var building in map.Buildings) entities.Add(MapEntitySummary.FromBuilding(building));
+        foreach (var furniture in map.Furniture) entities.Add(MapEntitySummary.FromFurniture(furniture));
         return entities;
     }
 
@@ -803,15 +932,18 @@ public partial class MapTabViewModel : ViewModelBase
     {
         Selected = null;
         Entities.Clear();
-        TryLoadTmxMap();
+        Animals.Clear();
 
         if (_save?.GetLocationMap(value) is { } resolvedMap)
         {
             _map = resolvedMap;
             _mapLocationName = value;
+            TryLoadTmxMap(resolvedMap.Name ?? value);
             _farmEntitiesCache = LoadEntitiesFrom(_map);
             foreach (var entity in _farmEntitiesCache)
                 Entities.Add(entity);
+            foreach (var animal in _map.Animals)
+                Animals.Add(animal);
 
             var unmodeled = _map.UnmodeledTerrainFeatures;
             Summary = unmodeled.Count == 0
@@ -820,6 +952,23 @@ public partial class MapTabViewModel : ViewModelBase
                   $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
             RecomputeUnmodeledContentWarnings(unmodeled);
         }
+        else
+        {
+            TryLoadTmxMap(value);
+        }
+
+        OnPropertyChanged(nameof(HasAnimalHouseInterior));
+        OnPropertyChanged(nameof(AnimalHouseCategory));
+        OnPropertyChanged(nameof(AvailableFarmAnimalTypes));
+        OnPropertyChanged(nameof(AnimalCountLabel));
+        OnPropertyChanged(nameof(CanAddAnimal));
+        AddAnimalCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedFarmAnimalTypeChanged(PlaceableFarmAnimal? value)
+    {
+        OnPropertyChanged(nameof(CanAddAnimal));
+        AddAnimalCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Detail behind Summary's one-line "N tile(s) of unmodeled terrain..." clause -
@@ -842,20 +991,100 @@ public partial class MapTabViewModel : ViewModelBase
     partial void OnHouseUpgradeLevelChanged(int value)
     {
         if (_save is not null)
+        {
+            var shifted = ShiftFarmHouseContentsForUpgrade(_save.Player.HouseUpgradeLevel, value);
             _save.Player.HouseUpgradeLevel = value;
+
+            // The shift above mutates the FarmHouse's underlying XML directly via a fresh
+            // SaveGameEditor.GetLocationMap("FarmHouse") lookup, not through _map/_farmEntitiesCache
+            // - so if the user is currently looking at the FarmHouse (_map wraps the very same
+            // XElement, just via a different FarmMapEditor instance), Entities' cached
+            // MapEntitySummary.Position values (captured at construction, not live) would otherwise
+            // go stale until the user navigates away and back. Confirmed via the render-harness
+            // house-upgrade-shift-test: without this, a Chest's ViewModel-visible position didn't
+            // move even though the underlying save XML was already correctly shifted.
+            if (shifted && SelectedLocationName == "FarmHouse" && _map is not null)
+            {
+                Selected = null;
+                _farmEntitiesCache = LoadEntitiesFrom(_map);
+                Entities.Clear();
+                foreach (var entity in _farmEntitiesCache) Entities.Add(entity);
+            }
+        }
         FarmHouseMapFileName = FarmHouseMapFileNameFor(value);
     }
 
-    /// <summary>Pushes the current location onto the breadcrumb stack and switches to name -
-    /// called by BuildingDetailsViewModel's "Enter Interior" action. Only ever pushed to by
-    /// entering a building interior, so BackToParentLocation always means "go up one level".</summary>
-    public void EnterLocation(string name)
+    /// <summary>Single-step tile deltas the real FarmHouse.moveObjectsForHouseUpgrade() applies for
+    /// each ADJACENT upgrade transition (decompiled source, confirmed) - levels 2 and 3 share the
+    /// same map (FarmHouseMapFileNameFor), so there's no shift between them. This tool lets the
+    /// user jump to any level directly (real gameplay only ever steps one level at a time), so an
+    /// arbitrary old-&gt;new change is decomposed into a walk across these single steps below.
+    /// Deliberately scoped out: the real method's extra fridge-area furniture repositioning (8
+    /// specific old-&gt;new tile swaps plus a 25&lt;=X&lt;=28/20&lt;=Y&lt;=21 special case) - a
+    /// uniform ShiftContents keeps everything else correctly placed, just not that one cosmetic
+    /// nicety.</summary>
+    private static readonly Dictionary<(int From, int To), (int Dx, int Dy)> HouseUpgradeStepDeltas = new()
     {
+        [(0, 1)] = (6, 0),
+        [(1, 0)] = (-6, 0),
+        [(1, 2)] = (18, 19),
+        [(2, 1)] = (-18, -19),
+    };
+
+    private static int NormalizeHouseLevel(int level) => level switch { <= 0 => 0, 1 => 1, _ => 2 };
+
+    private bool ShiftFarmHouseContentsForUpgrade(int oldLevel, int newLevel)
+    {
+        var from = NormalizeHouseLevel(oldLevel);
+        var to = NormalizeHouseLevel(newLevel);
+        if (from == to || _save?.GetLocationMap("FarmHouse") is not { } farmHouse)
+            return false;
+
+        var step = from < to ? 1 : -1;
+        for (var level = from; level != to; level += step)
+        {
+            if (HouseUpgradeStepDeltas.TryGetValue((level, level + step), out var delta))
+                farmHouse.ShiftContents(delta.Dx, delta.Dy);
+        }
+        return true;
+    }
+
+    /// <summary>Pushes the current location onto the breadcrumb stack and switches to
+    /// locationKey - called by BuildingDetailsViewModel's "Enter Interior" action. Only ever
+    /// pushed to by entering a building interior, so BackToParentLocation always means "go up one
+    /// level". locationKey and the breadcrumb's displayed label are separate: for a real named
+    /// location (Farmhouse/Greenhouse) they're the same string, but a per-instance building
+    /// interior's locationKey is a synthetic, not-user-facing lookup key (see
+    /// SaveGameEditor.BuildingInteriorLocationName) - displayLabel is what the breadcrumb/UI
+    /// should actually show instead.</summary>
+    public void EnterLocation(string locationKey, string? displayLabel)
+    {
+        var label = displayLabel ?? locationKey;
         _locationHistory.Push(SelectedLocationName);
         HasLocationHistory = true;
-        LocationBreadcrumb = string.Join(" > ", _locationHistory.Reverse().Append(name));
-        SelectedLocationName = name;
+        LocationBreadcrumb = string.Join(" > ", _locationHistory.Reverse().Append(label));
+        SelectedLocationName = locationKey;
     }
+
+    /// <summary>Enters a Shed's (or, once supported, Barn/Coop's) own per-instance &lt;indoors&gt;
+    /// interior - the OTHER interior shape EnterLocation's real-named-location path doesn't
+    /// understand. The display label is purely cosmetic (just the building type, e.g. "Shed") -
+    /// SelectedLocationName/GetLocationMap always resolve by the building's own real, unique id,
+    /// so two different Sheds showing the same breadcrumb label is a non-issue.</summary>
+    public void EnterBuildingInterior(BuildingEditor building)
+    {
+        if (SaveGameEditor.BuildingInteriorLocationName(building) is { } key)
+            EnterLocation(key, building.BuildingType);
+    }
+
+    /// <summary>#6c: "select a chest on the map, then navigate to its contents" - raised by
+    /// PlacedObjectDetailsViewModel's Go To Storage command. MapTabViewModel has no reference to
+    /// the parent SaveEditorViewModel (switching tabs is outside its own concern - same reason
+    /// Farm.RegenerateConfirmed/GreenhouseUnlockedChanged are events SaveEditorViewModel wires up
+    /// itself rather than methods called directly), so this is an event, not a direct call.</summary>
+    public event Action<ChestEditor>? GoToChestInStorage;
+
+    private void RequestGoToChestInStorage(ChestEditor chest) => GoToChestInStorage?.Invoke(chest);
 
     private bool CanGoBackToParentLocation() => _locationHistory.Count > 0;
 
@@ -909,7 +1138,7 @@ public partial class MapTabViewModel : ViewModelBase
         foreach (var name in save.LocationNames.OrderBy(n => n))
             AvailableLocations.Add(name);
         SelectedLocationName = AvailableLocations.Contains("Farm") ? "Farm" : AvailableLocations.FirstOrDefault() ?? "Farm";
-        TryLoadTmxMap(); // explicit, not just relying on OnSelectedLocationNameChanged - that partial won't fire above if SelectedLocationName happened to already equal "Farm"
+        TryLoadTmxMap(_map!.Name ?? SelectedLocationName); // explicit, not just relying on OnSelectedLocationNameChanged - that partial won't fire above if SelectedLocationName happened to already equal "Farm"
 
         _farmEntitiesCache = LoadEntitiesFrom(_map);
 
@@ -1064,7 +1293,11 @@ public partial class MapTabViewModel : ViewModelBase
 
         PlacementBlockedMessage = null;
         PlacementBlockedTiles = Array.Empty<TilePosition>();
-        var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical, building.HayCapacity);
+        // buildingType == "Shed" takes precedence inside AddBuilding regardless of IndoorMap, so
+        // passing it through unconditionally here is safe even though Shed's own IndoorMap
+        // ("Shed") would otherwise also look like a (wrong-shaped) AnimalHouse request.
+        var placed = _map.AddBuilding(tile, building.Name, building.TilesWide, building.TilesHigh, building.Magical, building.HayCapacity,
+            building.IndoorMap, building.MaxOccupants);
         var summary = MapEntitySummary.FromBuilding(placed);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
@@ -1081,6 +1314,37 @@ public partial class MapTabViewModel : ViewModelBase
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
         Selected = summary;
+    }
+
+    /// <summary>Applies fertilizer to an existing HoeDirt tile at this position, tilling a fresh
+    /// (bare) one first if there isn't one yet - same "auto-till if needed" convenience
+    /// PlantCropAt already uses, since real gameplay requires tilled ground either way. Always
+    /// rebuilds/replaces the summary (matching PlantCropAt) so a re-fertilize of an already-tilled
+    /// tile actually redraws - FarmMapControl reads HasFertilizer/FertilizerId live off the same
+    /// HoeDirtEditor instance, but only repaints in response to an Entities collection change.</summary>
+    private void FertilizeAt(TilePosition tile, PlaceableFertilizer fertilizer)
+    {
+        if (_map is null)
+            return;
+
+        var existing = Entities.FirstOrDefault(e => e.Kind == MapEntityKind.HoeDirt && e.Position == tile);
+        var dirt = existing?.Source as HoeDirtEditor ?? _map.AddHoeDirt(tile);
+        dirt.ApplyFertilizer(fertilizer.QualifiedId);
+
+        var fresh = MapEntitySummary.FromHoeDirt(dirt);
+        if (existing is not null)
+        {
+            var idx = Entities.IndexOf(existing);
+            if (idx >= 0) Entities[idx] = fresh;
+            var cacheIdx = _farmEntitiesCache.IndexOf(existing);
+            if (cacheIdx >= 0) _farmEntitiesCache[cacheIdx] = fresh;
+        }
+        else
+        {
+            _farmEntitiesCache.Add(fresh);
+            Entities.Add(fresh);
+        }
+        Selected = fresh;
     }
 
     /// <summary>Plants into an existing bare (crop-less) HoeDirt tile at this position if one's
@@ -1103,9 +1367,21 @@ public partial class MapTabViewModel : ViewModelBase
         var fullGrown = PlantCropMature && crop.RegrowDays != -1;
         var flip = Random.Shared.Next(2) == 0;
 
+        // Real flowers (Tulip, Poppy, Blue Jazz, Summer Spangle, Fairy Rose) carry a
+        // Data/Crops.json "TintColors" list the real game randomly picks from at plant time and
+        // draws as a colored overlay once mature (see HoeDirtEditor.PlantCrop remarks) - every
+        // other crop has an empty list here, so tintColor stays null for them.
+        (byte R, byte G, byte B, byte A)? tintColor = null;
+        if (crop.TintColors.Count > 0)
+        {
+            var chosen = crop.TintColors[Random.Shared.Next(crop.TintColors.Count)];
+            if (Avalonia.Media.Color.TryParse(chosen, out var parsed))
+                tintColor = (parsed.R, parsed.G, parsed.B, parsed.A);
+        }
+
         dirt.PlantCrop(crop.SeedIndex, crop.DaysInPhase, crop.RegrowDays, crop.HarvestItemId, crop.HarvestMinStack,
             crop.HarvestMaxStack, crop.HarvestMaxIncreasePerFarmingLevel, crop.IsScytheHarvest, crop.IsRaisedSeeds,
-            crop.ExtraHarvestChance, crop.SpriteIndex, crop.Seasons, currentPhase, 0, fullGrown, flip);
+            crop.ExtraHarvestChance, crop.SpriteIndex, crop.Seasons, currentPhase, 0, fullGrown, flip, tintColor);
 
         var fresh = MapEntitySummary.FromHoeDirt(dirt);
         if (existing is not null)
@@ -1136,6 +1412,20 @@ public partial class MapTabViewModel : ViewModelBase
         Selected = summary;
     }
 
+    private void PlantFruitTreeAt(TilePosition tile, string treeId)
+    {
+        if (_map is null)
+            return;
+
+        var growthStage = PlantFruitTreeMature ? 4 : 0;
+        var daysUntilMature = PlantFruitTreeMature ? 0 : 28;
+        var fruitTree = _map.AddFruitTree(tile, treeId, growthStage, daysUntilMature);
+        var summary = MapEntitySummary.FromFruitTree(fruitTree);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
     private void PlantBushAt(TilePosition tile, int size)
     {
         if (_map is null)
@@ -1143,6 +1433,21 @@ public partial class MapTabViewModel : ViewModelBase
 
         var bush = _map.AddBush(tile, size, CurrentDaysPlayed, PlantBushMature ? 1 : 0);
         var summary = MapEntitySummary.FromBush(bush);
+        _farmEntitiesCache.Add(summary);
+        Entities.Add(summary);
+        Selected = summary;
+    }
+
+    private void PlaceFurnitureAt(TilePosition tile, PlaceableFurniture furniture)
+    {
+        if (_map is null)
+            return;
+
+        var placed = _map.AddFurniture(tile, furniture.ItemId, furniture.Name, furniture.SpriteIndex,
+            furniture.FurnitureType, furniture.Rotations, furniture.Price,
+            furniture.SourceX, furniture.SourceY, furniture.SourceWidth, furniture.SourceHeight,
+            furniture.BoundingWidth, furniture.BoundingHeight, furniture.DrawHeldObjectLow);
+        var summary = MapEntitySummary.FromFurniture(placed);
         _farmEntitiesCache.Add(summary);
         Entities.Add(summary);
         Selected = summary;
@@ -1196,6 +1501,24 @@ public partial class MapTabViewModel : ViewModelBase
                 TryPlaceOrConfirm(tile, bushWidth, 1, $"Plant {SelectedBushSize.Name} bush", () => PlantBushAt(tile, SelectedBushSize.Value),
                     ignoreBlocking: e => e.Kind == MapEntityKind.Flooring);
                 break;
+            case PlacementTool.Furniture when SelectedFurniture is { } furniture:
+                // Footprint varies per piece (a rug vs. a dresser vs. a painting), so - like
+                // Building/PlantBush - this keeps its own real footprint per click rather than
+                // the BrushSize-driven brush-tool stamp.
+                var furnitureWidth = Math.Max(1, furniture.BoundingWidth / 64);
+                var furnitureHeight = Math.Max(1, furniture.BoundingHeight / 64);
+                if (!CanPlaceFootprint(tile, furnitureWidth, furnitureHeight, isBuilding: false))
+                {
+                    PlacementBlockedMessage = $"Can't place {furniture.Name} at ({tile.X}, {tile.Y}) - the game wouldn't allow it there.";
+                    PlacementBlockedTiles = FootprintTiles(tile, furnitureWidth, furnitureHeight);
+                    break;
+                }
+                PlacementBlockedTiles = Array.Empty<TilePosition>();
+                // Furniture lives in its own <furniture> flat list, a separate collision category
+                // from Flooring (same "always passable" rule as the Object/PlantBush tools above).
+                TryPlaceOrConfirm(tile, furnitureWidth, furnitureHeight, $"Place {furniture.Name}", () => PlaceFurnitureAt(tile, furniture),
+                    ignoreBlocking: e => e.Kind == MapEntityKind.Flooring);
+                break;
         }
     }
 
@@ -1241,16 +1564,27 @@ public partial class MapTabViewModel : ViewModelBase
                         && !Entities.Any(e => e.Kind == MapEntityKind.HoeDirt && e.Position == t), // already tilled - nothing to do, skip silently rather than re-confirm
                     ignoreBlocking: null, applyAt: TillAt);
                 return true;
+            case PlacementTool.Fertilize when SelectedFertilizer is { } fertilizer:
+                ApplyBrushTool(candidateTiles, $"Apply {fertilizer.Name}", "Can't fertilize there - not diggable/plantable ground.",
+                    t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false),
+                    ignoreBlocking: e => e.Kind == MapEntityKind.HoeDirt, // fertilizing existing tilled soil (with or without a crop) never needs to displace anything
+                    applyAt: t => FertilizeAt(t, fertilizer));
+                return true;
             case PlacementTool.PlantCrop when SelectedPlaceableCrop is { } crop:
                 ApplyBrushTool(candidateTiles, $"Plant {crop.Name}", $"Can't plant {crop.Name} there - not diggable/plantable ground.",
                     t => (_tmxMap?.IsTileDiggable(t.X, t.Y) ?? true) && CanPlaceFootprint(t, 1, 1, isBuilding: false),
                     ignoreBlocking: e => e.Kind == MapEntityKind.HoeDirt && ((HoeDirtEditor)e.Source).Crop is null, // bare tilled soil is fine to plant straight into
                     applyAt: t => PlantCropAt(t, crop));
                 return true;
+            case PlacementTool.PlantTree when IsFruitTreeMode && SelectedFruitTreeType is { } fruitType:
+                ApplyBrushTool(candidateTiles, $"Plant {fruitType.Name} tree", "Can't plant a tree there - the game wouldn't allow one there.",
+                    t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null,
+                    applyAt: t => PlantFruitTreeAt(t, fruitType.TreeId));
+                return true;
             case PlacementTool.PlantTree:
                 ApplyBrushTool(candidateTiles, $"Plant {SelectedTreeType.Name} tree", "Can't plant a tree there - the game wouldn't allow one there.",
                     t => CanPlaceFootprint(t, 1, 1, isBuilding: false), ignoreBlocking: null,
-                    applyAt: t => PlantTreeAt(t, SelectedTreeType.Value, PlantTreeGrowthStage));
+                    applyAt: t => PlantTreeAt(t, SelectedTreeType.Value, PlantTreeGrowthStage.Value));
                 return true;
             default:
                 return false;

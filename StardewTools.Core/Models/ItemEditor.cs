@@ -78,5 +78,25 @@ public sealed class ItemEditor
 
     public bool IsStackable => MaximumStackSize > 1;
 
+    /// <summary>The dye/tint color a ColoredObject-subclass item carries (Wool, Roe/Aged Roe,
+    /// Juice, Wine, Duck Feather, ... - anything whose real class is
+    /// StardewValley.Objects.ColoredObject, not plain Object) - confirmed real field/shape via
+    /// decompiled ColoredObject.cs (&lt;color&gt;, same B/G/R/A/PackedValue NetColor shape as
+    /// Chest.playerChoiceColor). Absent (null) for every other item type - checking the element's
+    /// own presence rather than trusting ItemType == "ColoredObject" alone, since that string
+    /// match is the same defensive-by-presence approach Quality/ParentSheetIndex already use
+    /// here rather than assuming a fixed set of xsi:type values is exhaustive.</summary>
+    public (byte R, byte G, byte B, byte A)? Color
+    {
+        get => _element.TryGetChildColor("color");
+        set
+        {
+            if (value is { } c)
+                _element.SetChildColorCreateIfMissing("color", c.R, c.G, c.B, c.A);
+        }
+    }
+
+    public bool HasColor => _element.Element("color") is not null;
+
     internal XElement Element => _element;
 }

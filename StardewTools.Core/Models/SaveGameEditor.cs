@@ -72,18 +72,46 @@ public sealed class SaveGameEditor
         => _saveFile.Root.Element("locations")?.Elements("GameLocation")
             .FirstOrDefault(e => (string?)e.Element("name") == locationName);
 
+    /// <summary>Prefix for the synthetic, per-building-instance "location name" used to resolve a
+    /// Shed/Barn/Coop's own nested &lt;indoors&gt; element (see BuildingInteriorLocationName/
+    /// GetLocationMap) - these aren't in the top-level &lt;locations&gt; list at all (each placed
+    /// building has its own private interior, not a shared named one like Greenhouse), so they
+    /// need a lookup key distinct from any real location name. Keyed by the building's own real
+    /// &lt;id&gt; GUID (confirmed unique - see BuildingEditor.Id), not by type/position, so it
+    /// keeps resolving correctly even if the building is later moved.</summary>
+    private const string BuildingInteriorPrefix = "__indoors__";
+
+    /// <summary>The synthetic lookup key for a specific placed building's own &lt;indoors&gt;
+    /// interior - see BuildingInteriorPrefix remarks. Null if the building has no real &lt;id&gt;
+    /// (shouldn't happen for anything AddBuilding/AddFarmhouse constructs, but real save data from
+    /// outside this tool could in principle predate the field).</summary>
+    public static string? BuildingInteriorLocationName(BuildingEditor building)
+        => building.Id is { } id ? BuildingInteriorPrefix + id : null;
+
     /// <summary>
     /// A FarmMapEditor for any top-level location by its real name, not just Farm - confirmed
     /// that Greenhouse's and FarmHouse's &lt;GameLocation&gt; elements are structurally identical
     /// to Farm's for every field FarmMapEditor reads (objects/terrainFeatures/
     /// largeTerrainFeatures/buildings/resourceClumps, same order), so no changes to FarmMapEditor
-    /// itself were needed to support this. Null when the name doesn't resolve to a real location -
-    /// covers both "no such location" and the per-instance-&lt;indoors&gt; case (Barn/Coop/Shed),
-    /// which isn't in the top-level &lt;locations&gt; list at all and has no real save evidence to
-    /// confirm its shape against, so it's deliberately not attempted here.
+    /// itself were needed to support this. Falls back to resolving a per-building-instance
+    /// &lt;indoors&gt; element (see BuildingInteriorLocationName) when the name isn't a top-level
+    /// location - FarmMapEditor's constructor has no tag-name/xsi:type check, so it already works
+    /// unmodified on a nested &lt;indoors&gt; element the same way it does on a top-level one, as
+    /// long as that element has the same GameLocation-shaped children (confirmed true for
+    /// BuildingIndoorsEditor's own output). Null when neither resolves.
     /// </summary>
     public FarmMapEditor? GetLocationMap(string locationName)
-        => FindLocationElement(locationName) is { } element ? new FarmMapEditor(element) : null;
+    {
+        if (FindLocationElement(locationName) is { } element)
+            return new FarmMapEditor(element);
+
+        if (!locationName.StartsWith(BuildingInteriorPrefix, StringComparison.Ordinal))
+            return null;
+
+        var buildingId = locationName[BuildingInteriorPrefix.Length..];
+        var indoors = Map.Buildings.FirstOrDefault(b => b.Id == buildingId)?.Element.Element("indoors");
+        return indoors is not null ? new FarmMapEditor(indoors) : null;
+    }
 
     public string Season
     {
