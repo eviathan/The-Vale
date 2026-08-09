@@ -5,6 +5,7 @@
         xmlns:conv="using:Avalonia.Data.Converters"
         xmlns:iconconv="using:StardewTools.SaveEditor.Converters"
         xmlns:mapassets="using:StardewTools.SaveEditor.MapAssets"
+        xmlns:media="using:Avalonia.Media"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="720"
@@ -98,9 +99,39 @@
                             <controls:StardewIcon Kind="ArrowRight" IconSize="12"/>
                         </StackPanel>
                     </Button>
+                    <Button Content="Save Preset..." Click="OnSavePresetClicked" IsEnabled="{Binding IsSaveLoaded}" Margin="16,0,0,0"
+                            ToolTip.Tip="Saves the current state as a plain save file under a new name, so it can be used as a source for Apply Preset later - including on a different save."/>
+                    <Button Content="Apply Preset..." Click="OnApplyPresetClicked"
+                            ToolTip.Tip="Loads another save file and lets you copy chosen sections of it (Map, Player, Achievements, ...) onto the currently open save."/>
                 </StackPanel>
 
                 <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusMessage}" Margin="0,12,0,0" Opacity="0.7"/>
+
+                <controls:StardewPanel DockPanel.Dock="Top" Margin="0,0,0,12" Padding="12" IsVisible="{Binding IsPresetPanelOpen}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Apply Preset" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding PresetSourceSummary, StringFormat='Source: {0}'}" TextWrapping="Wrap"/>
+                        <TextBlock Text="Choose which parts of the source save to copy onto the CURRENTLY OPEN save below. Nothing is written to disk until you use Save - this can also be undone with Ctrl+Z like any other edit. Storage isn't its own option - a chest's contents travel automatically with whatever contains it (Map or Inventory)."
+                                   Opacity="0.7" FontSize="11" TextWrapping="Wrap"/>
+                        <ItemsControl ItemsSource="{Binding PresetSectionOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:PresetSectionOptionViewModel">
+                                    <CheckBox IsChecked="{Binding IsSelected}" Content="{Binding Section}" ToolTip.Tip="{Binding Description}"
+                                              Width="200" Margin="0,0,8,8"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Apply" Command="{Binding ApplyPresetCommand}"/>
+                            <Button Content="Cancel" Click="OnCancelPresetClicked"/>
+                        </StackPanel>
+                    </StackPanel>
+                </controls:StardewPanel>
 
                 <TabControl IsEnabled="{Binding IsSaveLoaded}" SelectedIndex="{Binding SelectedTabIndex}">
 
@@ -467,8 +498,24 @@
                                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8"
                                                 IsVisible="{Binding SelectedChest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
                                         <TextBlock Text="Lid color" VerticalAlignment="Center"/>
-                                        <ColorPicker Color="{Binding SelectedChest.Color}" IsAlphaEnabled="False"/>
-                                        <TextBlock Text="Black = no custom color (plain unpainted lid, same as the real color wheel's default). Alpha is disabled because the real game tints the whole chest sprite with this color, alpha included - anything less than fully opaque makes the chest invisible in-game, not just tinted." VerticalAlignment="Center" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Width="260"/>
+                                        <ListBox ItemsSource="{Binding SelectedChest.Palette}" SelectedItem="{Binding SelectedChest.Color}"
+                                                 Background="Transparent" BorderThickness="0" Padding="0">
+                                            <ListBox.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel MaxWidth="180"/>
+                                                </ItemsPanelTemplate>
+                                            </ListBox.ItemsPanel>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate x:DataType="media:Color">
+                                                    <Border Width="18" Height="18" Margin="1" CornerRadius="2" BorderBrush="Black" BorderThickness="1">
+                                                        <Border.Background>
+                                                            <SolidColorBrush Color="{Binding}"/>
+                                                        </Border.Background>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <TextBlock Text="Only the 21 colors the real in-game chest color wheel offers are selectable - the first (black) is the real 'no custom color' default, same as an unpainted lid." VerticalAlignment="Center" Opacity="0.6" FontSize="11" TextWrapping="Wrap" Width="220"/>
                                     </StackPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="This chest is empty - add something from the right." Opacity="0.6" TextWrapping="Wrap" Margin="0,0,0,8"
                                                IsVisible="{Binding ChestIsEmpty}"/>

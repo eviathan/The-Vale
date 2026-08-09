@@ -5,6 +5,7 @@ using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StardewTools.Core.Models;
+using StardewTools.SaveEditor;
 
 namespace StardewTools.SaveEditor.ViewModels;
 
@@ -46,6 +47,12 @@ public partial class SaveEditorViewModel : ViewModelBase
             CanUndo = _undo.CanUndo;
             CanRedo = _undo.CanRedo;
         };
+
+        // CanApplyPreset reads IsSelected off a different ViewModel (PresetSectionOptionViewModel)
+        // than the one the [RelayCommand] lives on, so the source generator's own
+        // NotifyCanExecuteChangedFor wiring can't see it - wire it by hand instead.
+        foreach (var option in PresetSectionOptions)
+            option.PropertyChanged += (_, _) => ApplyPresetCommand.NotifyCanExecuteChanged();
 
         // "Regenerate Farm" lives entirely on the Farm tab (confirmation UI stays within its own
         // DataContext scope, no cross-tab XAML binding needed) but the actual wipe touches the
@@ -172,5 +179,84 @@ public partial class SaveEditorViewModel : ViewModelBase
 
         _save.Save(_filePath);
         StatusMessage = $"Saved {Path.GetFileName(_filePath)} (backup: {Path.GetFileName(backupPath)})";
+    }
+
+    /// <summary>Cross-save recovery ("apply selected sections from another save onto this one" -
+    /// see PresetSections). A "preset" is deliberately just an ordinary save file - this writes
+    /// the CURRENT live state to a new path without touching _filePath/the undo stack, so opening
+    /// it later (via LoadPresetSource, or even the normal Open Save button) works exactly like
+    /// opening any other save.</summary>
+    public void SavePreset(string path) => _save?.Save(path);
+
+    private SaveGameEditor? _presetSource;
+
+    [ObservableProperty] private string? _presetSourcePath;
+    [ObservableProperty] private string? _presetSourceSummary;
+    [ObservableProperty] private bool _isPresetPanelOpen;
+
+    public IReadOnlyList<PresetSectionOptionViewModel> PresetSectionOptions { get; } =
+        Enum.GetValues<PresetSection>()
+            .Select(section => new PresetSectionOptionViewModel(section, PresetSections.Descriptions[section]))
+            .ToList();
+
+    /// <summary>Loads any other save file (a preset saved via SavePreset, a raw backup, another
+    /// character's save, even the broken save this whole feature exists to recover from) as a
+    /// read-only source, completely independent from _save/the undo stack - nothing here is
+    /// written until ApplyPresetCommand runs, and _presetSource itself is never bound to any tab.</summary>
+    public void LoadPresetSource(string path)
+    {
+        _presetSource = SaveGameEditor.Load(path);
+        PresetSourcePath = path;
+
+        var farmType = GameEnums.FindOrFirst(GameEnums.FarmTypes, _presetSource.Farm.WhichFarm).Name;
+        PresetSourceSummary = $"{_presetSource.Player.Name} - {farmType} farm, Year {_presetSource.Year} {_presetSource.Season} {_presetSource.DayOfMonth} (House level {_presetSource.Player.HouseUpgradeLevel})";
+
+        foreach (var option in PresetSectionOptions)
+            option.IsSelected = false;
+
+        IsPresetPanelOpen = true;
+    }
+
+    public void CancelPreset()
+    {
+        _presetSource = null;
+        PresetSourcePath = null;
+        PresetSourceSummary = null;
+        IsPresetPanelOpen = false;
+    }
+
+    private bool CanApplyPreset() => _presetSource is not null && _save is not null && PresetSectionOptions.Any(o => o.IsSelected);
+
+    [RelayCommand(CanExecute = nameof(CanApplyPreset))]
+    private void ApplyPreset()
+    {
+        if (_presetSource is null || _save is null)
+            return;
+
+        var applied = new List<string>();
+        foreach (var option in PresetSectionOptions.Where(o => o.IsSelected))
+        {
+            PresetSections.Copy(option.Section, _presetSource, _save);
+            applied.Add(option.Section.ToString());
+        }
+
+        BindAll(_save);
+        StatusMessage = $"Applied from {Path.GetFileName(PresetSourcePath)}: {string.Join(", ", applied)}. Not saved to disk yet - use Save when you're happy with the result (or Undo/Ctrl+Z to back it out).";
+        CancelPreset();
+    }
+}
+
+/// <summary>One row in the Apply Preset panel's section checklist.</summary>
+public sealed partial class PresetSectionOptionViewModel : ViewModelBase
+{
+    public PresetSection Section { get; }
+    public string Description { get; }
+
+    [ObservableProperty] private bool _isSelected;
+
+    public PresetSectionOptionViewModel(PresetSection section, string description)
+    {
+        Section = section;
+        Description = description;
     }
 }

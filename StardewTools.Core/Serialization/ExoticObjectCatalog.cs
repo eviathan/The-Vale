@@ -48,6 +48,7 @@ internal static class ExoticObjectCatalog
         [(323, false)] = new ExoticObjectSpec { XsiTypeName = "Fence", ExtraFields = FenceXmlBuilder.Fields },
         [(324, false)] = new ExoticObjectSpec { XsiTypeName = "Fence", ExtraFields = FenceXmlBuilder.Fields },
         [(298, false)] = new ExoticObjectSpec { XsiTypeName = "Fence", ExtraFields = FenceXmlBuilder.Fields },
+        [(325, false)] = new ExoticObjectSpec { XsiTypeName = "Fence", ExtraFields = FenceXmlBuilder.Fields },
     };
 
     public static bool IsKnown(int parentSheetIndex, bool isBigCraftable) => ById.ContainsKey((parentSheetIndex, isBigCraftable));

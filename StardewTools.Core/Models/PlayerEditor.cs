@@ -28,6 +28,25 @@ public sealed class PlayerEditor
 
     public void RemoveQuestById(string id) => FindQuest(id)?.Element.Remove();
 
+    /// <summary>Deep-clones an existing quest - possibly from a completely different save's own
+    /// PlayerEditor, QuestEditor.Element is a plain XElement so this works regardless of which
+    /// document it originated in - into this player's active log. Used by cross-save recovery
+    /// (StardewTools.SaveEditor.PresetSections.CopyQuests); QuestEditor.Element is internal, so
+    /// this has to live here rather than in the app layer.</summary>
+    public QuestEditor CloneQuestInto(QuestEditor quest)
+    {
+        var container = _element.Element("questLog");
+        if (container is null)
+        {
+            container = new XElement("questLog");
+            _element.Add(container);
+        }
+
+        var clone = new XElement(quest.Element);
+        container.Add(clone);
+        return new QuestEditor(clone);
+    }
+
     public bool IsQuestCompleted(string id) => FindQuest(id)?.Completed ?? false;
 
     /// <summary>Marks a quest completed by id - if it's already in the active log (a real quest

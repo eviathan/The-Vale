@@ -62,6 +62,51 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnSavePresetClicked(object? sender, RoutedEventArgs e)
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+        {
+            Title = "Save preset as",
+        });
+
+        if (file is null)
+            return;
+
+        try
+        {
+            ViewModel.SavePreset(file.Path.LocalPath);
+            ViewModel.StatusMessage = $"Saved preset {file.Name}";
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusMessage = $"Failed to save preset: {ex.Message}";
+        }
+    }
+
+    private async void OnApplyPresetClicked(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = "Open a save file to apply sections from",
+            AllowMultiple = false,
+        });
+
+        var file = files.FirstOrDefault();
+        if (file is null)
+            return;
+
+        try
+        {
+            ViewModel.LoadPresetSource(file.Path.LocalPath);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusMessage = $"Failed to open preset source: {ex.Message}";
+        }
+    }
+
+    private void OnCancelPresetClicked(object? sender, RoutedEventArgs e) => ViewModel.CancelPreset();
+
     private async void OnBrowseMapFolderClicked(object? sender, RoutedEventArgs e)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions

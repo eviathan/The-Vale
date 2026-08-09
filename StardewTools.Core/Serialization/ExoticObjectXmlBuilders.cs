@@ -75,18 +75,21 @@ internal static class CrabPotXmlBuilder
 internal static class FenceXmlBuilder
 {
     /// <summary>Decompiled only (Fence.cs) - no real save instance exists locally. health/
-    /// maxHealth use each material's real Data/Fences.json base value (28/60/125/280 for Wood/
-    /// Stone/Iron/Hardwood) times Fence.globalHealthMultiplier (2), with no random jitter (the
+    /// maxHealth use each material's real Data/Fences.json base value (28/60/125/280/100 for Wood/
+    /// Stone/Iron/Hardwood/Gate) times Fence.globalHealthMultiplier (2), with no random jitter (the
     /// real game adds +/-1.0 before the multiplier, randomized per-instance - a fixed baseline
-    /// is used here instead of guessing at a specific roll).</summary>
+    /// is used here instead of guessing at a specific roll). isGate is real, itemId-driven state -
+    /// decompiled Object.placementAction sets it via `base.ItemId == "325"` (the Gate item), not a
+    /// separate user choice - so it's derived here the same way, not always false. gateMotion is
+    /// NOT actually serialized by the real game (Fence.cs's own field has no [XmlElement] - it's a
+    /// per-frame transient), so it's deliberately not written here either.</summary>
     public static IEnumerable<XElement> Fields(int parentSheetIndex)
     {
         var health = BaseHealth(parentSheetIndex) * 2;
         yield return new XElement("health", health);
         yield return new XElement("maxHealth", health);
         yield return new XElement("gatePosition", 0);
-        yield return new XElement("gateMotion", 0);
-        yield return new XElement("isGate", false);
+        yield return new XElement("isGate", parentSheetIndex == 325);
     }
 
     private static int BaseHealth(int parentSheetIndex) => parentSheetIndex switch
@@ -95,6 +98,7 @@ internal static class FenceXmlBuilder
         323 => 60,  // Stone Fence
         324 => 125, // Iron Fence
         298 => 280, // Hardwood Fence
+        325 => 100, // Gate
         _ => 28,
     };
 }

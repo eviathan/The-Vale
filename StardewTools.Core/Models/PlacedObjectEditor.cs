@@ -27,6 +27,15 @@ public sealed class PlacedObjectEditor
     /// rendering code already checking Item.ItemType before treating an Object as a fence).</summary>
     public ChestEditor AsChest() => new(Item.Element);
 
+    /// <summary>Real Fence.isGate field - only meaningful when Item.ItemType == "Fence" (see
+    /// FenceXmlBuilder). Defaults false so callers can read this on any placed Object without
+    /// checking ItemType first.</summary>
+    public bool IsGate => Item.Element.TryGetChildBool("isGate") ?? false;
+
+    /// <summary>Real Fence.gatePosition field (0 = closed, 88 = fully open, animates between) -
+    /// only meaningful when IsGate. See FenceSprites.GateDrawsFor's open/closed column choice.</summary>
+    public int GatePosition => Item.Element.TryGetChildInt("gatePosition") ?? 0;
+
     /// <summary>
     /// Unlike Tree/Grass/HoeDirt, a placed Object tracks its own tile position twice - once as
     /// the objects-dictionary key (what the game uses to look it up) and again on the Object

@@ -433,12 +433,19 @@ public sealed class FarmMapEditor
     {
         var container = TerrainFeaturesContainer();
 
+        // No <fruit> element at all when freshly planted - decompiled FruitTree.fruit is a
+        // NetList<Item,...> tagged [XmlElement("fruit")], and for a *collection* field that
+        // attribute means "each item is its own repeated <fruit> element", not "wrap the list in
+        // one <fruit> container" - zero items means zero elements. A real, confirmed save-load
+        // failure (game kicks back to the save picker with "There is an error in XML document")
+        // was traced to this: an unconditional empty `<fruit />` makes the deserializer try to
+        // resolve it as a polymorphic Item and fail, for every single fruit tree this tool ever
+        // planted.
         var value = new XElement("TerrainFeature",
             new XAttribute(XsiType, "FruitTree"),
             new XElement("growthStage", growthStage),
             new XElement("treeId", treeId),
             new XElement("daysUntilMature", daysUntilMature),
-            new XElement("fruit"),
             new XElement("struckByLightningCountdown", 0),
             new XElement("health", 10),
             new XElement("flipped", false),
@@ -763,6 +770,7 @@ public sealed class FarmMapEditor
         _farmLocation.Element("resourceClumps")?.RemoveNodes();
         _farmLocation.Element("largeTerrainFeatures")?.RemoveNodes();
         _farmLocation.Element("buildings")?.RemoveNodes();
+        _farmLocation.Element("furniture")?.RemoveNodes();
     }
 
     public void Move(TreeEditor tree, TilePosition newPosition) => tree.Move(newPosition);
@@ -820,6 +828,28 @@ public sealed class FarmMapEditor
                 var clonedItem = new XElement(flooring.Item);
                 TerrainFeaturesContainer().Add(clonedItem);
                 var result = new FlooringEditor(flooring.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case FruitTreeEditor fruitTree:
+            {
+                var clonedItem = new XElement(fruitTree.Item);
+                TerrainFeaturesContainer().Add(clonedItem);
+                var result = new FruitTreeEditor(fruitTree.Position, clonedItem.Element("value")!.Elements().Single());
+                result.Move(newPosition);
+                return result;
+            }
+            case FurnitureEditor furniture:
+            {
+                var clonedElement = new XElement(furniture.Element);
+                var container = _farmLocation.Element("furniture");
+                if (container is null)
+                {
+                    container = new XElement("furniture");
+                    _farmLocation.Add(container);
+                }
+                container.Add(clonedElement);
+                var result = new FurnitureEditor(clonedElement);
                 result.Move(newPosition);
                 return result;
             }

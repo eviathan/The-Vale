@@ -30,8 +30,15 @@ public partial class ChestRowViewModel : ViewModelBase
     /// sentinel, not a genuine black paint job (a player can't actually choose true black via
     /// the in-game color wheel either - confirmed via decompiled Chest.draw()'s own
     /// `playerChoiceColor.Value.Equals(Color.Black)` check for "draw the plain unpainted lid").
-    /// Always fully opaque - see OnColorChanged remarks for why anything less breaks rendering.</summary>
+    /// Always fully opaque - see OnColorChanged remarks for why anything less breaks rendering.
+    /// Constrained to Palette (see below) - a free-form RGB picker let players choose colors the
+    /// real game's own chest color wheel can never produce.</summary>
     [ObservableProperty] private Color _color;
+
+    /// <summary>The exact 21 colors selectable here, matching the real in-game chest color wheel
+    /// (see ChestColorPalette remarks) - real, reported bug: this used to be a free-form
+    /// ColorPicker, letting players pick RGB values no vanilla chest can ever actually have.</summary>
+    public static System.Collections.Generic.IReadOnlyList<Color> Palette => MapAssets.ChestColorPalette.Colors;
 
     public ChestRowViewModel(ChestEditor chest, int index)
     {

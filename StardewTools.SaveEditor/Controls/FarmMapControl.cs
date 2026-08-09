@@ -1163,27 +1163,54 @@ public sealed class FarmMapControl : Control
             && FenceSprites.TryGetBitmap(ContentFolder, fenceIdx, out var fenceBitmap))
         {
             // Real connectivity SUM (not a bitmask - Left=10/Right=100/Down=500/Up=1000, see
-            // FenceSprites remarks), only counting same-material neighbors.
+            // FenceSprites remarks). A neighbor counts if it's the same material, OR if THIS fence
+            // is a gate (a gate connects to any adjacent non-gate material) - matches decompiled
+            // Fence.countsForDrawing() exactly: gates themselves never count as a neighbor (325
+            // never equals a real material id, so a plain fence naturally never "connects" to an
+            // adjacent gate without any extra check needed here).
+            var isGate = fenceIdx == FenceSprites.GateItemId;
+            bool Connects(int x, int y) => _fenceLookup.TryGetValue((x, y), out var nid) && (nid == fenceIdx || isGate);
             var connectivitySum = 0;
-            if (_fenceLookup.TryGetValue((entity.Position.X - 1, entity.Position.Y), out var leftId) && leftId == fenceIdx)
+            if (Connects(entity.Position.X - 1, entity.Position.Y))
                 connectivitySum += 10;
-            if (_fenceLookup.TryGetValue((entity.Position.X + 1, entity.Position.Y), out var rightId) && rightId == fenceIdx)
+            if (Connects(entity.Position.X + 1, entity.Position.Y))
                 connectivitySum += 100;
-            if (_fenceLookup.TryGetValue((entity.Position.X, entity.Position.Y + 1), out var downId) && downId == fenceIdx)
+            if (Connects(entity.Position.X, entity.Position.Y + 1))
                 connectivitySum += 500;
-            if (_fenceLookup.TryGetValue((entity.Position.X, entity.Position.Y - 1), out var upId) && upId == fenceIdx)
+            if (Connects(entity.Position.X, entity.Position.Y - 1))
                 connectivitySum += 1000;
+
+            var pixelsPerSourcePixel = scale / 16.0;
+            var tileOriginX = pixelOffsetX + entity.Position.X * scale;
+            var tileOriginY = pixelOffsetY + entity.Position.Y * scale;
+
+            var gateDraws = isGate ? FenceSprites.GateDrawsFor(connectivitySum, fence.GatePosition == 88) : null;
+            if (gateDraws is not null)
+            {
+                foreach (var draw in gateDraws)
+                {
+                    var gw = draw.Source.Width * pixelsPerSourcePixel;
+                    var gh = draw.Source.Height * pixelsPerSourcePixel;
+                    var gx = tileOriginX + draw.OffsetTilesX * scale;
+                    var gy = tileOriginY + draw.OffsetTilesY * scale;
+                    var gateRect = new Rect(gx, gy, gw, gh);
+                    context.DrawImage(fenceBitmap, draw.Source, gateRect);
+                    Record(gateRect);
+                }
+                return;
+            }
 
             // Bottom-anchored like trees/bigCraftables - a fence's 16x32 sprite is always taller
             // (2 tiles) than its 1-tile footprint (confirmed via decompiled Fence.draw()'s own
             // `y * 64 - 64` dest origin - the sprite starts one full tile above and ends exactly
-            // at this tile's bottom edge).
-            var fenceSource = FenceSprites.SourceFor(connectivitySum);
-            var pixelsPerSourcePixel = scale / 16.0;
+            // at this tile's bottom edge). An isolated gate (no GateDrawsFor case matched) uses
+            // this same uniform cell math, just at the real solo-gate index (17) instead of the
+            // regular isolated-post index (5).
+            var fenceSource = isGate ? FenceSprites.SourceForIndex(FenceSprites.SoloGateIndex) : FenceSprites.SourceFor(connectivitySum);
             var fw = fenceSource.Width * pixelsPerSourcePixel;
             var fh = fenceSource.Height * pixelsPerSourcePixel;
-            var fx = pixelOffsetX + entity.Position.X * scale;
-            var fy = pixelOffsetY + entity.Position.Y * scale + scale - fh;
+            var fx = tileOriginX;
+            var fy = tileOriginY + scale - fh;
             var fenceRect = new Rect(fx, fy, fw, fh);
             context.DrawImage(fenceBitmap, fenceSource, fenceRect);
             Record(fenceRect);
@@ -1693,6 +1720,28 @@ public sealed class FarmMapControl : Control
             // GreenhouseBuilding.draw()'s "sourceRect.Y -= sourceRect.Height" when not unlocked).
             if (building.BuildingType == "Greenhouse" && !GreenhouseUnlocked)
                 source = new Rect(source.X, source.Y - source.Height, source.Width, source.Height);
+
+            // Junimo Hut's real sheet (256x64) packs 4 seasonal 48x64 frames side by side, plus a
+            // few small held-item/lit-window icon fragments after them - Data/Buildings.json's own
+            // SourceRect is the generic (0,0,0,0) "whole texture" sentinel BuildingSprites just
+            // resolved to the full 256x64 bounds, but the real game's JunimoHut class overrides
+            // getSourceRectForMenu() (always preferred over the data-driven SourceRect per
+            // Building.draw()'s own "getSourceRectForMenu() ?? getSourceRect()") to crop to just
+            // the current season's own 48x64 frame instead - confirmed via decompiled
+            // JunimoHut.getSourceRectForMenu(): `new Rectangle(seasonIndex * 48, 0, 48, 64)`.
+            // Without this, this tool drew the whole sheet (all 4 seasons + icon fragments
+            // squashed together) as one garbled building image.
+            else if (building.BuildingType == "Junimo Hut")
+            {
+                var seasonIndex = Season.ToLowerInvariant() switch
+                {
+                    "summer" => 1,
+                    "fall" => 2,
+                    "winter" => 3,
+                    _ => 0,
+                };
+                source = new Rect(seasonIndex * 48, 0, 48, 64);
+            }
         }
 
         var paint = building.PaintColor;
