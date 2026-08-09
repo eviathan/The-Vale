@@ -1153,6 +1153,35 @@ public sealed class FarmMapControl : Control
             var cx = pixelOffsetX + entity.Position.X * scale + scale / 2 - cw / 2;
             var cy = pixelOffsetY + entity.Position.Y * scale + scale - ch;
             var craftableRect = new Rect(cx, cy, cw, ch);
+
+            // A real colorable chest (Chest/Stone Chest/Big Chest/Big Stone Chest - see
+            // ChestTint.FrameFor) ONLY draws as the special tinted-body + plain-lid pair once the
+            // player has actually chosen a color - black (0,0,0,255) is the real "no custom color"
+            // sentinel, and for that case the real game takes a completely different early-return
+            // branch in Chest.draw() that draws the item's own natural default appearance (its
+            // plain ParentSheetIndex cell, e.g. wood-brown for Chest/130), NOT the flattened
+            // recolor-ready "body" cell (168 etc.) with no tint applied - drawing that raw and
+            // untinted is what produced a flat gray chest for every *default* chest, a real,
+            // confirmed regression from this fix's first version. Any other bigCraftable
+            // (including non-colorable chest-family types like Junimo Chest/Mini-Fridge) also
+            // falls through to the original single-cell draw below.
+            if (craftable.Item.ItemType == "Chest")
+            {
+                var color = craftable.AsChest().PlayerChoiceColor;
+                if (color is not (0, 0, 0, 255) && ChestTint.FrameFor(craftableIndex) is { } frame
+                    && BigCraftableSprites.TryGetSprite(ContentFolder, frame.BodyIndex, out var bodySheet, out var bodySource)
+                    && BigCraftableSprites.TryGetSprite(ContentFolder, frame.LidIndex, out var lidSheet, out var lidSource))
+                {
+                    if (ChestTint.TryGetCellBitmap(ContentFolder, frame.BodyIndex, bodySheet, bodySource, color, out var bodyBitmap))
+                        context.DrawImage(bodyBitmap, new Rect(0, 0, bodySource.Width, bodySource.Height), craftableRect);
+                    if (ChestTint.TryGetCellBitmap(ContentFolder, frame.LidIndex, lidSheet, lidSource, null, out var lidBitmap))
+                        context.DrawImage(lidBitmap, new Rect(0, 0, lidSource.Width, lidSource.Height), craftableRect);
+
+                    Record(craftableRect);
+                    return;
+                }
+            }
+
             context.DrawImage(craftableBitmap, craftableSource, craftableRect);
             Record(craftableRect);
             return;
