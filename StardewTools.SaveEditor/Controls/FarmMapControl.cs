@@ -182,6 +182,13 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<int> HoverFootprintHeightProperty =
         AvaloniaProperty.Register<FarmMapControl, int>(nameof(HoverFootprintHeight), 1);
 
+    /// <summary>#9: the real coverage area (dx,dy tile offsets from the hovered tile) of whatever
+    /// SelectedPlaceableItem is currently armed - null for anything without a known AOE
+    /// (MapTabViewModel.HoverAoeTiles/AreaOfEffect). Drawn under the cursor alongside the normal
+    /// green footprint outline, before you've even clicked.</summary>
+    public static readonly StyledProperty<IReadOnlyList<(int Dx, int Dy)>?> HoverAoeTilesProperty =
+        AvaloniaProperty.Register<FarmMapControl, IReadOnlyList<(int Dx, int Dy)>?>(nameof(HoverAoeTiles));
+
     /// <summary>Player.Stats.DaysPlayed - only used for a tea bush's age-based growth-stage
     /// sprite (Bush.getAge()). Zero elsewhere has no visible effect.</summary>
     public static readonly StyledProperty<int> CurrentDaysPlayedProperty =
@@ -388,6 +395,12 @@ public sealed class FarmMapControl : Control
         set => SetValue(HoverFootprintHeightProperty, value);
     }
 
+    public IReadOnlyList<(int Dx, int Dy)>? HoverAoeTiles
+    {
+        get => GetValue(HoverAoeTilesProperty);
+        set => SetValue(HoverAoeTilesProperty, value);
+    }
+
     public int CurrentDaysPlayed
     {
         get => GetValue(CurrentDaysPlayedProperty);
@@ -398,7 +411,7 @@ public sealed class FarmMapControl : Control
     {
         AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
             ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty, IsPlacementToolActiveProperty, HoverFootprintWidthProperty, HoverFootprintHeightProperty,
-            CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty, FarmMapFileNameProperty, FarmHouseMapFileNameProperty, GreenhouseUnlockedProperty);
+            HoverAoeTilesProperty, CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty, FarmMapFileNameProperty, FarmHouseMapFileNameProperty, GreenhouseUnlockedProperty);
         FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
         ClipToBoundsProperty.OverrideDefaultValue<FarmMapControl>(true); // at native zoom the map is almost always bigger than the viewport - without this it draws straight over the side panel instead of being cropped to its own column
     }
@@ -647,6 +660,20 @@ public sealed class FarmMapControl : Control
 
         context.FillRectangle(new SolidColorBrush(Color.Parse("#4034D058")), rect);
         context.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#34D058")), 2), rect);
+
+        // #9: preview a sprinkler/scarecrow's real coverage area before it's even placed - see
+        // MapTabViewModel.HoverAoeTiles/AreaOfEffect for which items this applies to.
+        if (HoverAoeTiles is { } aoeTiles)
+        {
+            var aoeFill = new SolidColorBrush(Color.Parse("#402979FF"));
+            var aoePen = new Pen(new SolidColorBrush(Color.Parse("#2979FF")), 1.5);
+            foreach (var (dx, dy) in aoeTiles)
+            {
+                var aoeRect = new Rect((hover.X + dx - layout.MinX) * layout.Scale, (hover.Y + dy - layout.MinY) * layout.Scale, layout.Scale, layout.Scale);
+                context.FillRectangle(aoeFill, aoeRect);
+                context.DrawRectangle(aoePen, aoeRect);
+            }
+        }
     }
 
     /// <summary>Live preview of the whole Line/Rectangle shape while dragging - same green as
@@ -980,7 +1007,32 @@ public sealed class FarmMapControl : Control
         // occluder was already drawn translucent above, but redrawing the selection itself on
         // top handles cases the opacity pass doesn't catch (e.g. Front-layer tiles).
         if (Selected is { } selected && allEntities.Contains(selected))
+        {
             DrawSingleEntity(context, selected, offsetX, offsetY, tileScale, 1.0);
+            DrawSelectedAoeOverlay(context, selected, offsetX, offsetY, tileScale);
+        }
+    }
+
+    /// <summary>#9: shows a placed sprinkler/scarecrow's real coverage area when it's the current
+    /// Selected entity - lets you check an EXISTING placement's reach without needing to move it
+    /// or place a new one. See AreaOfEffect remarks for exactly which items this covers.</summary>
+    private static void DrawSelectedAoeOverlay(DrawingContext context, MapEntitySummary entity, double offsetX, double offsetY, double tileScale)
+    {
+        if (entity.Kind != MapEntityKind.Object || entity.Source is not PlacedObjectEditor placed)
+            return;
+
+        var tiles = AreaOfEffect.TilesFor(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "", placed.Item.Name);
+        if (tiles is null)
+            return;
+
+        var fill = new SolidColorBrush(Color.Parse("#402979FF"));
+        var pen = new Pen(new SolidColorBrush(Color.Parse("#2979FF")), 1.5);
+        foreach (var (dx, dy) in tiles)
+        {
+            var rect = new Rect(offsetX + (entity.Position.X + dx) * tileScale, offsetY + (entity.Position.Y + dy) * tileScale, tileScale, tileScale);
+            context.FillRectangle(fill, rect);
+            context.DrawRectangle(pen, rect);
+        }
     }
 
     /// <summary>

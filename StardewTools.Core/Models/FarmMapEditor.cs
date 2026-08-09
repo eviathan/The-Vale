@@ -890,6 +890,51 @@ public sealed class FarmMapEditor
     }
 
     /// <summary>
+    /// Shifts every placed Furniture whose CURRENT position falls within the given inclusive tile
+    /// rectangle by (dx, dy) - ported from decompiled FarmHouse.moveObjectsForHouseUpgrade's own
+    /// post-shiftContents(18,19) correction pass: `if (v.tileLocation.X &gt;= 25 &amp;&amp; &lt;= 28
+    /// &amp;&amp; Y &gt;= 20 &amp;&amp; &lt;= 21) v.TileLocation -= (3, 9)`. Only ever called with
+    /// that exact window in practice (see MapTabViewModel's house-upgrade step table) - kept
+    /// general/parameterized rather than hardcoded here since the correction logic itself (not
+    /// its specific coordinates) belongs in Core, same as ShiftContents.
+    /// </summary>
+    public void ShiftFurnitureInRegion(int minX, int maxX, int minY, int maxY, int dx, int dy)
+    {
+        foreach (var furniture in Furniture)
+        {
+            if (furniture.Position.X >= minX && furniture.Position.X <= maxX
+                && furniture.Position.Y >= minY && furniture.Position.Y <= maxY)
+            {
+                furniture.Move(new TilePosition(furniture.Position.X + dx, furniture.Position.Y + dy));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Finds whatever's at the given exact tile - a Furniture or an Object, checked in that order
+    /// - and moves it to the new tile. No-ops if nothing's there. Ported verbatim from decompiled
+    /// GameLocation.moveFurniture(oldX, oldY, newX, newY), which despite the name also falls back
+    /// to the objects dictionary (a plain key-move there, not a full Object.Move - matched here via
+    /// PlacedObjectEditor.Move for consistency, which does the same key update plus keeping
+    /// tileLocation/boundingBox in sync, a strict superset). Used by FarmHouse's house-upgrade
+    /// step table for its 8 hardcoded standard-kitchen-appliance corrections (see
+    /// MapTabViewModel.FarmHouseUpgradeFurnitureMoves) - real, absolute save-file tile coordinates
+    /// specific to the vanilla level-1 FarmHouse kitchen layout, not derived from anything else.
+    /// </summary>
+    public void MoveFurnitureOrObjectAt(TilePosition oldPosition, TilePosition newPosition)
+    {
+        var furnitureHere = Furniture.FirstOrDefault(f => f.Position == oldPosition);
+        if (furnitureHere is not null)
+        {
+            furnitureHere.Move(newPosition);
+            return;
+        }
+
+        var objectHere = Objects.FirstOrDefault(o => o.Position == oldPosition);
+        objectHere?.Move(newPosition);
+    }
+
+    /// <summary>
     /// Walks a `&lt;name&gt;&lt;item&gt;&lt;key&gt;&lt;Vector2&gt;X/Y&lt;/Vector2&gt;&lt;/key&gt;
     /// &lt;value&gt;{single child}&lt;/value&gt;&lt;/item&gt;...&lt;/name&gt;` tile dictionary,
     /// yielding each entry's position and its value's single child element.

@@ -598,6 +598,13 @@
                                         <TextBlock Text="{Binding LocationBreadcrumb}" VerticalAlignment="Center" Opacity="0.7"
                                                     IsVisible="{Binding HasLocationHistory}"/>
                                     </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4">
+                                        <TextBlock Text="Nudge all contents (tiles)" VerticalAlignment="Center" Opacity="0.7"
+                                                   ToolTip.Tip="Shifts every placed tree/object/furniture/etc in this location - a manual fix for content left out of place by an old house-upgrade bug (or any other cause), since there's no reliable way to auto-detect how far out of place it is."/>
+                                        <NumericUpDown Value="{Binding ShiftDx}" Width="90" FormatString="0" Increment="1"/>
+                                        <NumericUpDown Value="{Binding ShiftDy}" Width="90" FormatString="0" Increment="1"/>
+                                        <Button Content="Shift" Command="{Binding ShiftLocationContentsCommand}"/>
+                                    </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
                                         <TextBlock Text="Assets folder" VerticalAlignment="Center"/>
                                         <TextBox Text="{Binding ContentFolder}" Width="200"/>
@@ -669,6 +676,7 @@
                                                           BlockedTiles="{Binding PlacementBlockedTiles}"
                                                           HoverFootprintWidth="{Binding HoverFootprintWidth}"
                                                           HoverFootprintHeight="{Binding HoverFootprintHeight}"
+                                                          HoverAoeTiles="{Binding HoverAoeTiles}"
                                                           CurrentDaysPlayed="{Binding CurrentDaysPlayed}"
                                                           MinHeight="400"/>
                             </DockPanel>
@@ -710,6 +718,50 @@
                                         <Button Content="{Binding SelectedRange.Count, StringFormat='Remove Selected ({0})'}" Command="{Binding RemoveRangeCommand}"/>
                                         <Button Content="Copy (Ctrl+C)" Command="{Binding CopyCommand}"/>
                                         <Button Content="Duplicate (Ctrl+D)" Command="{Binding DuplicateCommand}"/>
+
+                                        <TextBlock Text="Tool actions on selection" FontWeight="Bold" Margin="0,6,0,0"/>
+                                        <TextBlock Text="Applies a real tool's effect to every member of the selection it's valid for - other entities in the selection are silently skipped, same as the real game's own tool-vs-target rules."
+                                                   Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                        <WrapPanel>
+                                            <Button Content="Watering can" Command="{Binding BulkWaterCommand}" Margin="0,0,4,4"
+                                                    ToolTip.Tip="Waters every dry, tilled soil tile in the selection."/>
+                                            <Button Content="Hoe" Command="{Binding BulkHoeCommand}" Margin="0,0,4,4"
+                                                    ToolTip.Tip="Tills every patch of grass in the selection into bare soil."/>
+                                            <Button Content="Axe" Command="{Binding BulkChopCommand}" Margin="0,0,4,4"
+                                                    ToolTip.Tip="Chops every tree in the selection down to a stump."/>
+                                            <Button Content="Pickaxe" Command="{Binding BulkMineCommand}" Margin="0,0,4,4"
+                                                    ToolTip.Tip="Mines every stone/ore/stump/boulder clump in the selection."/>
+                                        </WrapPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Button Content="Fertilize" Command="{Binding BulkFertilizeCommand}"
+                                                    ToolTip.Tip="Applies the fertilizer picked below to every tilled soil tile in the selection."/>
+                                            <ComboBox ItemsSource="{Binding AvailableFertilizers}" SelectedItem="{Binding SelectedFertilizer}" Width="160"/>
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="6" IsVisible="{Binding HasSelectedTrees}">
+                                            <TextBlock Text="{Binding SelectedTreeCount, StringFormat='Trees in selection ({0}) - group edit'}" FontWeight="Bold" Margin="0,6,0,0"/>
+                                            <TextBlock Text="Sets every tree in the selection to the same value at once - there's no single 'current' value shown first, since a mixed selection has no one value to display."
+                                                       Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <ComboBox ItemsSource="{Binding TreeGrowthStages}" SelectedItem="{Binding BulkTreeGrowthStage}" Width="140"/>
+                                                <Button Content="Set growth stage" Command="{Binding BulkApplyTreeGrowthStageCommand}"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Content="Chop to stumps" Command="{Binding BulkApplyTreeStumpCommand}" CommandParameter="True"/>
+                                                <Button Content="Restore from stumps" Command="{Binding BulkApplyTreeStumpCommand}" CommandParameter="False"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="6" IsVisible="{Binding HasSelectedFruitTrees}">
+                                            <TextBlock Text="{Binding SelectedFruitTreeCount, StringFormat='Fruit trees in selection ({0}) - group edit'}" FontWeight="Bold" Margin="0,6,0,0"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <ComboBox ItemsSource="{Binding FruitTreeGrowthStages}" SelectedItem="{Binding BulkFruitTreeGrowthStage}" Width="140"/>
+                                                <Button Content="Set growth stage" Command="{Binding BulkApplyFruitTreeGrowthStageCommand}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding BulkActionStatus}" Opacity="0.7" FontSize="11" TextWrapping="Wrap"
+                                                   IsVisible="{Binding BulkActionStatus, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
                                     </StackPanel>
                                     <Button Content="Paste (Ctrl+V)" Command="{Binding PasteCommand}"/>
 

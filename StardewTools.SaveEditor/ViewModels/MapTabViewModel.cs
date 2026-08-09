@@ -91,7 +91,19 @@ public partial class MapTabViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(CopyCommand))]
     [NotifyCanExecuteChangedFor(nameof(DuplicateCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkWaterCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkHoeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkChopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkMineCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkFertilizeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyTreeGrowthStageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyTreeStumpCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyFruitTreeGrowthStageCommand))]
     [NotifyPropertyChangedFor(nameof(HasSelectedRange))]
+    [NotifyPropertyChangedFor(nameof(HasSelectedTrees))]
+    [NotifyPropertyChangedFor(nameof(HasSelectedFruitTrees))]
+    [NotifyPropertyChangedFor(nameof(SelectedTreeCount))]
+    [NotifyPropertyChangedFor(nameof(SelectedFruitTreeCount))]
     private IReadOnlyList<MapEntitySummary> _selectedRange = Array.Empty<MapEntitySummary>();
     [ObservableProperty] private string _season = "";
     [ObservableProperty] private string _summary = "";
@@ -101,6 +113,7 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ShiftLocationContentsCommand))]
     private string _selectedLocationName = "Farm";
     [ObservableProperty] private int _houseUpgradeLevel;
 
@@ -129,9 +142,31 @@ public partial class MapTabViewModel : ViewModelBase
     private bool _hasLocationHistory;
     [ObservableProperty] private string _locationBreadcrumb = "Farm";
 
+    /// <summary>Manual nudge amount for ShiftLocationContentsCommand - a retroactive escape hatch
+    /// for a location whose placed content already drifted out of place before this session's
+    /// house-upgrade delta fix landed (or from any other cause - not FarmHouse-specific). Reset to
+    /// 0 after each use so repeat clicks don't accidentally reapply the same shift.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ShiftLocationContentsCommand))]
+    private int _shiftDx;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ShiftLocationContentsCommand))]
+    private int _shiftDy;
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
+    [NotifyPropertyChangedFor(nameof(HoverAoeTiles))]
     private PlaceableItem? _selectedPlaceableItem;
+
+    /// <summary>#9: the real coverage area (dx,dy tile offsets) SelectedPlaceableItem would have
+    /// once placed - null for anything without a known AOE (AreaOfEffect remarks), or when the
+    /// Object tool isn't even active. FarmMapControl draws this under the cursor's hovered tile
+    /// before you click, the same way HoverFootprintWidth/Height already preview a building's
+    /// footprint before placement.</summary>
+    public IReadOnlyList<(int Dx, int Dy)>? HoverAoeTiles
+        => IsObjectToolActive && SelectedPlaceableItem is { } item
+            ? AreaOfEffect.TilesFor(item.IsBigCraftable, item.RealItemId, item.Name)
+            : null;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
@@ -175,7 +210,9 @@ public partial class MapTabViewModel : ViewModelBase
     /// same "just plant already matured" default as crops/trees.</summary>
     [ObservableProperty] private bool _plantBushMature = true;
 
-    [ObservableProperty] private PlaceableFertilizer? _selectedFertilizer = PlaceableFertilizers.All.FirstOrDefault();
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(BulkFertilizeCommand))]
+    private PlaceableFertilizer? _selectedFertilizer = PlaceableFertilizers.All.FirstOrDefault();
     public IReadOnlyList<PlaceableFertilizer> AvailableFertilizers => PlaceableFertilizers.All;
 
     [ObservableProperty] private PlaceableFurniture? _selectedFurniture;
@@ -335,6 +372,7 @@ public partial class MapTabViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsAnyToolActive));
         OnPropertyChanged(nameof(HoverFootprintWidth));
         OnPropertyChanged(nameof(HoverFootprintHeight));
+        OnPropertyChanged(nameof(HoverAoeTiles));
     }
 
     partial void OnSelectedPlaceableBuildingChanged(PlaceableBuilding? value)
@@ -743,6 +781,197 @@ public partial class MapTabViewModel : ViewModelBase
         SelectedRange = Array.Empty<MapEntitySummary>();
     }
 
+    /// <summary>Result text for the last bulk tool action below (#8) - shown next to the buttons
+    /// so "nothing happened" (0 affected, e.g. a selection with no HoeDirt tiles for Water) is
+    /// visible feedback rather than a silent no-op.</summary>
+    [ObservableProperty] private string? _bulkActionStatus;
+
+    /// <summary>#8: "all tools should be possible to use [...] on a selection, hoeing, watering
+    /// can, pickaxe, axe etc" - each command below applies one real tool's effect to every member
+    /// of SelectedRange it's actually valid for (silently skipping the rest, same as the real
+    /// game's own tool-vs-target rules), leaving the selection intact afterward so several bulk
+    /// actions can be chained on the same marquee selection (e.g. Water then Fertilize).</summary>
+    private bool CanBulkActOnRange => SelectedRange.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanBulkActOnRange))]
+    private void BulkWater()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not HoeDirtEditor dirt || dirt.State == 1)
+                continue;
+
+            dirt.State = 1;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromHoeDirt(dirt));
+            affected++;
+        }
+        BulkActionStatus = $"Watering can: watered {affected} tile(s).";
+    }
+
+    /// <summary>Real gameplay's hoe-on-grass effect: clears the grass and tills the ground -
+    /// GrassEditor -&gt; a fresh HoeDirtEditor at the same tile (bare, dry - AddHoeDirt's own
+    /// default). Bare/unplanted ground has nothing here to select in the first place (SelectedRange
+    /// only ever contains EXISTING entities - see FarmMapControl.ResolveRangeSelection), so tilling
+    /// empty tiles stays the dedicated Till tool's job; this covers the "till over existing grass"
+    /// case that tool doesn't.</summary>
+    [RelayCommand(CanExecute = nameof(CanBulkActOnRange))]
+    private void BulkHoe()
+    {
+        if (_map is null)
+            return;
+
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not GrassEditor grass)
+                continue;
+
+            var position = grass.Position;
+            _map.Remove(grass);
+            var dirt = _map.AddHoeDirt(position);
+            ReplaceEntitySummary(entity, MapEntitySummary.FromHoeDirt(dirt));
+            affected++;
+        }
+        BulkActionStatus = $"Hoe: tilled {affected} patch(es) of grass.";
+    }
+
+    /// <summary>Real gameplay's axe-on-tree effect short of fully removing it: leaves a stump
+    /// (TreeEditor.Stump), same as chopping a tree down in-game before it's cleared. Already-stump
+    /// trees are skipped (nothing left to chop) - use Remove Range for actually clearing stumps.</summary>
+    [RelayCommand(CanExecute = nameof(CanBulkActOnRange))]
+    private void BulkChop()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not TreeEditor tree || tree.Stump)
+                continue;
+
+            tree.Stump = true;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromTree(tree));
+            affected++;
+        }
+        BulkActionStatus = $"Axe: chopped {affected} tree(s) to a stump.";
+    }
+
+    /// <summary>Real gameplay's pickaxe-on-clump effect: a stone/ore/stump/boulder clump has no
+    /// "damaged" state modeled (see ResourceClumpEditor), so mining one out is a straight removal,
+    /// same as Remove Range but filtered to just clumps within the selection.</summary>
+    [RelayCommand(CanExecute = nameof(CanBulkActOnRange))]
+    private void BulkMine()
+    {
+        var toRemove = SelectedRange.Where(e => e.Source is ResourceClumpEditor).ToList();
+        foreach (var entity in toRemove)
+        {
+            RemoveFromMap(entity);
+            Entities.Remove(entity);
+            _farmEntitiesCache.Remove(entity);
+        }
+        if (toRemove.Count > 0)
+            SelectedRange = SelectedRange.Except(toRemove).ToList();
+        BulkActionStatus = $"Pickaxe: mined {toRemove.Count} clump(s).";
+    }
+
+    private bool CanBulkFertilize => SelectedRange.Count > 0 && SelectedFertilizer is not null;
+
+    /// <summary>Bulk complement to the dedicated Fertilize tool's brush - applies SelectedFertilizer
+    /// to every already-tilled HoeDirt tile in the current selection at once.</summary>
+    [RelayCommand(CanExecute = nameof(CanBulkFertilize))]
+    private void BulkFertilize()
+    {
+        if (SelectedFertilizer is not { } fertilizer)
+            return;
+
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not HoeDirtEditor dirt)
+                continue;
+
+            dirt.ApplyFertilizer(fertilizer.QualifiedId);
+            ReplaceEntitySummary(entity, MapEntitySummary.FromHoeDirt(dirt));
+            affected++;
+        }
+        BulkActionStatus = $"Applied {fertilizer.Name} to {affected} tile(s).";
+    }
+
+    /// <summary>#11: "affect all the properties of a selection [...] by grouping all similar tiles
+    /// and propagating the changes to all selected versions of it." A SelectedRange is grouped by
+    /// MapEntityKind here (Tree/FruitTree are the two kinds this exposes group-edit controls for -
+    /// the most common "adjust a whole planted cluster at once" case); picking a value and hitting
+    /// Apply pushes it to every member of that kind currently in the selection, the same
+    /// group-then-propagate shape the request describes. Unlike the single-entity details panel,
+    /// there's no "current value" shown first - a mixed-value group has no single representative
+    /// value to display, so this is a pure "set all to X" action, same UX as the #8 bulk actions.</summary>
+    public bool HasSelectedTrees => SelectedRange.Any(e => e.Kind == MapEntityKind.Tree);
+    public bool HasSelectedFruitTrees => SelectedRange.Any(e => e.Kind == MapEntityKind.FruitTree);
+    public int SelectedTreeCount => SelectedRange.Count(e => e.Kind == MapEntityKind.Tree);
+    public int SelectedFruitTreeCount => SelectedRange.Count(e => e.Kind == MapEntityKind.FruitTree);
+
+    [ObservableProperty] private NamedValue _bulkTreeGrowthStage = GameEnums.TreeGrowthStages[5];
+
+    [RelayCommand(CanExecute = nameof(HasSelectedTrees))]
+    private void BulkApplyTreeGrowthStage()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not TreeEditor tree)
+                continue;
+
+            tree.GrowthStage = BulkTreeGrowthStage.Value;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromTree(tree));
+            affected++;
+        }
+        BulkActionStatus = $"Set growth stage to {BulkTreeGrowthStage.Name} on {affected} tree(s).";
+    }
+
+    /// <summary>Separate from BulkChop (#8, which only ever CHOPS - skips already-stump trees and
+    /// never restores one) - this can go either direction, matching "affect all the properties"
+    /// rather than simulating one specific tool swing.</summary>
+    [RelayCommand(CanExecute = nameof(HasSelectedTrees))]
+    private void BulkApplyTreeStump(bool stump)
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not TreeEditor tree || tree.Stump == stump)
+                continue;
+
+            tree.Stump = stump;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromTree(tree));
+            affected++;
+        }
+        BulkActionStatus = $"{(stump ? "Chopped" : "Restored")} {affected} tree(s) {(stump ? "to a stump" : "from a stump")}.";
+    }
+
+    /// <summary>0-3 sapling stages, 4 = fully grown - see FruitTreeEditor.GrowthStage remarks
+    /// (a genuinely different real range from wild TreeEditor's 0-5, so a separate list, not
+    /// TreeGrowthStages reused).</summary>
+    public IReadOnlyList<NamedValue> FruitTreeGrowthStages { get; } = new[]
+    {
+        new NamedValue(0, "Seed"), new NamedValue(1, "Sprout"), new NamedValue(2, "Sapling"),
+        new NamedValue(3, "Bush"), new NamedValue(4, "Fully grown"),
+    };
+    [ObservableProperty] private NamedValue _bulkFruitTreeGrowthStage = new(4, "Fully grown");
+
+    [RelayCommand(CanExecute = nameof(HasSelectedFruitTrees))]
+    private void BulkApplyFruitTreeGrowthStage()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (entity.Source is not FruitTreeEditor fruitTree)
+                continue;
+
+            fruitTree.GrowthStage = BulkFruitTreeGrowthStage.Value;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromFruitTree(fruitTree));
+            affected++;
+        }
+        BulkActionStatus = $"Set growth stage to {BulkFruitTreeGrowthStage.Name} on {affected} fruit tree(s).";
+    }
+
     /// <summary>Clipboard for Copy/Paste/Duplicate - each entry's Source is the ORIGINAL live
     /// entity (not a detached clone); FarmMapEditor.CloneEntityAt deep-clones its underlying XML
     /// node fresh at paste time (new XElement(source) copies values regardless of whether the
@@ -1003,15 +1232,47 @@ public partial class MapTabViewModel : ViewModelBase
             // go stale until the user navigates away and back. Confirmed via the render-harness
             // house-upgrade-shift-test: without this, a Chest's ViewModel-visible position didn't
             // move even though the underlying save XML was already correctly shifted.
-            if (shifted && SelectedLocationName == "FarmHouse" && _map is not null)
-            {
-                Selected = null;
-                _farmEntitiesCache = LoadEntitiesFrom(_map);
-                Entities.Clear();
-                foreach (var entity in _farmEntitiesCache) Entities.Add(entity);
-            }
+            if (shifted && SelectedLocationName == "FarmHouse")
+                RefreshCurrentLocationEntities();
         }
         FarmHouseMapFileName = FarmHouseMapFileNameFor(value);
+    }
+
+    /// <summary>Rebuilds Entities/_farmEntitiesCache from _map and clears Selected - needed
+    /// whenever something shifts placed content's positions through a route OTHER than _map's own
+    /// Move()-based entity replacement (which already keeps Entities in sync itself), e.g. a fresh
+    /// FarmMapEditor obtained via SaveGameEditor.GetLocationMap wrapping the same underlying
+    /// XElement but producing new Editor/MapEntitySummary instances with stale cached Position
+    /// values otherwise. See OnHouseUpgradeLevelChanged/ShiftLocationContents.</summary>
+    private void RefreshCurrentLocationEntities()
+    {
+        if (_map is null)
+            return;
+
+        Selected = null;
+        _farmEntitiesCache = LoadEntitiesFrom(_map);
+        Entities.Clear();
+        foreach (var entity in _farmEntitiesCache) Entities.Add(entity);
+    }
+
+    private bool CanShiftLocationContents() => _map is not null && SelectedLocationName == _mapLocationName && (ShiftDx != 0 || ShiftDy != 0);
+
+    /// <summary>Manual retroactive fix for a location whose placed content is already out of
+    /// place - e.g. furniture left misplaced by a house upgrade applied before this session's
+    /// delta-table fix (see HouseUpgradeStepDeltas remarks), or from any other cause. Not tied to
+    /// house upgrades specifically - just a direct FarmMapEditor.ShiftContents call the user drives
+    /// by eye, since there's no reliable way to auto-detect "this content is how far out of
+    /// place" after the fact.</summary>
+    [RelayCommand(CanExecute = nameof(CanShiftLocationContents))]
+    private void ShiftLocationContents()
+    {
+        if (_map is null || (ShiftDx == 0 && ShiftDy == 0))
+            return;
+
+        _map.ShiftContents(ShiftDx, ShiftDy);
+        RefreshCurrentLocationEntities();
+        ShiftDx = 0;
+        ShiftDy = 0;
     }
 
     /// <summary>Single-step tile deltas the real FarmHouse.moveObjectsForHouseUpgrade() applies for
@@ -1019,16 +1280,32 @@ public partial class MapTabViewModel : ViewModelBase
     /// same map (FarmHouseMapFileNameFor), so there's no shift between them. This tool lets the
     /// user jump to any level directly (real gameplay only ever steps one level at a time), so an
     /// arbitrary old-&gt;new change is decomposed into a walk across these single steps below.
-    /// Deliberately scoped out: the real method's extra fridge-area furniture repositioning (8
-    /// specific old-&gt;new tile swaps plus a 25&lt;=X&lt;=28/20&lt;=Y&lt;=21 special case) - a
-    /// uniform ShiftContents keeps everything else correctly placed, just not that one cosmetic
-    /// nicety.</summary>
+    /// NOT a symmetric table - (2,1)'s real delta is (-3,0), NOT the inverse of (1,2)'s (18,19),
+    /// because the 1-&gt;2/3 direction ALSO applies the extra kitchen-appliance correction below
+    /// (a previous version of this code assumed symmetry here, which is exactly the "furniture
+    /// lands in the wrong/unsafe part of the room" bug reported after the initial #12 fix).</summary>
     private static readonly Dictionary<(int From, int To), (int Dx, int Dy)> HouseUpgradeStepDeltas = new()
     {
         [(0, 1)] = (6, 0),
         [(1, 0)] = (-6, 0),
         [(1, 2)] = (18, 19),
-        [(2, 1)] = (-18, -19),
+        [(2, 1)] = (-3, 0),
+    };
+
+    /// <summary>The 8 hardcoded old-&gt;new tile pairs decompiled FarmHouse.
+    /// moveObjectsForHouseUpgrade() applies ONLY on the 1-&gt;2/3 step, AFTER the (18,19) shift -
+    /// real, absolute post-shift tile coordinates for the vanilla level-1 kitchen's standard
+    /// appliances (stove/sink/counters), not derived from anything else. A uniform shift alone
+    /// leaves these specific items in the wrong spot relative to the bigger kitchen's new layout;
+    /// this is the game's own hand-tuned fixup for exactly that, previously scoped out of this
+    /// tool - which is what produced the reported "safe area for furniture is still not correct
+    /// after upgrading" bug (a level-1 kitchen's stove/sink landing on top of a wall/counter in
+    /// the level-2/3 layout instead of the new kitchen's actual appliance spots).</summary>
+    private static readonly (int OldX, int OldY, int NewX, int NewY)[] FarmHouseUpgradeFurnitureMoves =
+    {
+        (42, 23, 16, 14), (43, 23, 17, 14), (44, 23, 18, 14),
+        (43, 24, 22, 14), (44, 24, 23, 14), (42, 24, 19, 14),
+        (43, 25, 20, 14), (44, 26, 21, 14),
     };
 
     private static int NormalizeHouseLevel(int level) => level switch { <= 0 => 0, 1 => 1, _ => 2 };
@@ -1043,8 +1320,20 @@ public partial class MapTabViewModel : ViewModelBase
         var step = from < to ? 1 : -1;
         for (var level = from; level != to; level += step)
         {
-            if (HouseUpgradeStepDeltas.TryGetValue((level, level + step), out var delta))
-                farmHouse.ShiftContents(delta.Dx, delta.Dy);
+            if (!HouseUpgradeStepDeltas.TryGetValue((level, level + step), out var delta))
+                continue;
+
+            farmHouse.ShiftContents(delta.Dx, delta.Dy);
+
+            // The 1->2/3 step's own extra kitchen-appliance correction (decompiled source, see
+            // FarmHouseUpgradeFurnitureMoves remarks) - both parts run only for this specific step,
+            // never for 1->0 (real source has no such correction going down to level 0 either).
+            if (level == 1 && level + step == 2)
+            {
+                farmHouse.ShiftFurnitureInRegion(25, 28, 20, 21, -3, -9);
+                foreach (var (oldX, oldY, newX, newY) in FarmHouseUpgradeFurnitureMoves)
+                    farmHouse.MoveFurnitureOrObjectAt(new TilePosition(oldX, oldY), new TilePosition(newX, newY));
+            }
         }
         return true;
     }
@@ -1741,8 +2030,30 @@ public partial class MapTabViewModel : ViewModelBase
         BuildingEditor b => MapEntitySummary.FromBuilding(b),
         BushEditor bu => MapEntitySummary.FromBush(bu),
         FlooringEditor fl => MapEntitySummary.FromFlooring(fl),
+        FruitTreeEditor ft => MapEntitySummary.FromFruitTree(ft),
+        FurnitureEditor fu => MapEntitySummary.FromFurniture(fu),
         _ => throw new InvalidOperationException($"Unknown entity source type: {source.GetType()}."),
     };
+
+    /// <summary>Swaps a stale summary for a fresh one across Entities/_farmEntitiesCache/
+    /// SelectedRange/Selected - the same "position/kind changed, source editor didn't" update
+    /// every other in-place edit in this file already does (see the Move dispatch above), factored
+    /// out for the bulk tool-action commands below (#8), which each touch a whole SelectedRange
+    /// batch at once rather than one entity via the details panel.</summary>
+    private void ReplaceEntitySummary(MapEntitySummary oldSummary, MapEntitySummary freshSummary)
+    {
+        var idx = Entities.IndexOf(oldSummary);
+        if (idx >= 0) Entities[idx] = freshSummary;
+
+        var cacheIdx = _farmEntitiesCache.IndexOf(oldSummary);
+        if (cacheIdx >= 0) _farmEntitiesCache[cacheIdx] = freshSummary;
+
+        if (SelectedRange.Contains(oldSummary))
+            SelectedRange = SelectedRange.Select(e => ReferenceEquals(e, oldSummary) ? freshSummary : e).ToList();
+
+        if (ReferenceEquals(Selected, oldSummary))
+            Selected = freshSummary;
+    }
 
     private void TryPlaceOrConfirm(TilePosition tile, int width, int height, string label, Action place, MapEntitySummary? exclude = null, Func<MapEntitySummary, bool>? ignoreBlocking = null)
     {
