@@ -427,12 +427,20 @@ public partial class MapTabViewModel : ViewModelBase
     public string AnimalCountLabel => $"Animals ({Animals.Count} / {_map?.AnimalLimit ?? 0})";
 
     /// <summary>"Barn" or "Coop" - which PlaceableFarmAnimal.House category the current
-    /// interior's own real map name (FarmMapEditor.Name - "Barn"/"Barn2"/"Barn3"/"Coop"/"Coop2"/
-    /// "Coop3") accepts. Null outside an animal-house interior.</summary>
+    /// interior's own real map name (FarmMapEditor.Name) accepts. This is the location's DISPLAY
+    /// name ("Barn", "Big Barn", "Deluxe Barn", "Coop", "Big Coop", "Deluxe Coop" - confirmed
+    /// against real save data, see IndoorMapAssetNames' remarks for why this differs from the
+    /// actual map/tile-art asset name), so the tier prefix ("Big "/"Deluxe ") means every upgraded
+    /// building fails a StartsWith("Barn")/StartsWith("Coop") check - only the base tier ever
+    /// matched. EndsWith is correct for all 6 real names. Real, confirmed user report: the animal
+    /// type dropdown was empty (AvailableFarmAnimalTypes filters on this) for any Big/Deluxe Barn
+    /// or Coop - only noticed once the separate Shed/Barn/Coop solid-color interior bug (see
+    /// IndoorMapAssetNames) was fixed and upgraded interiors became visible/usable for the first
+    /// time. Null outside an animal-house interior.</summary>
     public string? AnimalHouseCategory => _map?.Name switch
     {
-        { } n when n.StartsWith("Barn", StringComparison.Ordinal) => "Barn",
-        { } n when n.StartsWith("Coop", StringComparison.Ordinal) => "Coop",
+        { } n when n.EndsWith("Barn", StringComparison.Ordinal) => "Barn",
+        { } n when n.EndsWith("Coop", StringComparison.Ordinal) => "Coop",
         _ => null,
     };
 
@@ -456,6 +464,19 @@ public partial class MapTabViewModel : ViewModelBase
         var animal = _map.AddAnimal(type.Type, AnimalHouseCategory ?? type.House, name, _save.Player.UniqueMultiplayerId);
         Animals.Add(animal);
         NewAnimalName = "";
+        OnPropertyChanged(nameof(AnimalCountLabel));
+        OnPropertyChanged(nameof(CanAddAnimal));
+        AddAnimalCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
+    private void RemoveAnimal(FarmAnimalEditor animal)
+    {
+        if (_map is null)
+            return;
+
+        _map.RemoveAnimal(animal);
+        Animals.Remove(animal);
         OnPropertyChanged(nameof(AnimalCountLabel));
         OnPropertyChanged(nameof(CanAddAnimal));
         AddAnimalCommand.NotifyCanExecuteChanged();

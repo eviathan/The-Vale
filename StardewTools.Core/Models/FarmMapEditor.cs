@@ -181,6 +181,23 @@ public sealed class FarmMapEditor
         return new FarmAnimalEditor(animalElement);
     }
 
+    /// <summary>Removes an animal previously returned by AddAnimal/Animals - the inverse of
+    /// AddAnimal, removing both its &lt;item&gt; entry from &lt;animals&gt; and its matching
+    /// &lt;long&gt; from &lt;animalsThatLiveHere&gt; so the two stay in sync the same way AddAnimal
+    /// keeps them in sync when adding.</summary>
+    public void RemoveAnimal(FarmAnimalEditor animal)
+    {
+        var myId = animal.MyId;
+
+        _farmLocation.Element("animals")?.Elements("item")
+            .FirstOrDefault(item => (long?)item.Element("key")?.Element("long") == myId)
+            ?.Remove();
+
+        _farmLocation.Element("animalsThatLiveHere")?.Elements("long")
+            .FirstOrDefault(e => (long?)e == myId)
+            ?.Remove();
+    }
+
     /// <summary>
     /// Places a new plain Object - or, when <paramref name="bigCraftable"/> is true, a
     /// machine/decoration like a Furnace or Grandfather Clock - on the farm at the given tile.
