@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Xml.Linq;
 using StardewTools.Core.Serialization;
 
@@ -93,6 +95,22 @@ public sealed class SaveGameEditor
     /// outside this tool could in principle predate the field).</summary>
     public static string? BuildingInteriorLocationName(BuildingEditor building)
         => building.Id is { } id ? BuildingInteriorPrefix + id : null;
+
+    /// <summary>Reverse of BuildingInteriorLocationName - given a synthetic per-building-instance
+    /// location key, finds the real Building it belongs to (e.g. so callers can look up its
+    /// buildingType for things BuildingInteriorLocationName's key alone can't answer, like which
+    /// real Data/Buildings.json IndoorMap art asset to load - see MapTabViewModel's
+    /// IndoorMapAssetNames). Null if locationName isn't one of these synthetic keys, or the
+    /// building it names no longer exists.</summary>
+    public BuildingEditor? FindBuildingForInteriorLocationName(string locationName)
+    {
+        if (!locationName.StartsWith(BuildingInteriorPrefix, StringComparison.Ordinal))
+            return null;
+
+        var buildingId = locationName[BuildingInteriorPrefix.Length..];
+        var element = Map.Buildings.FirstOrDefault(b => b.Id == buildingId)?.Element;
+        return element is null ? null : new BuildingEditor(element);
+    }
 
     /// <summary>
     /// A FarmMapEditor for any top-level location by its real name, not just Farm - confirmed

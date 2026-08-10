@@ -1175,6 +1175,28 @@ public partial class MapTabViewModel : ViewModelBase
     /// _mapLocationName gate on CanPlaceObject/CanPlaceBuilding/OnClickedTileChanged correctly
     /// disables editing while still allowing read-only tile art to load below.
     /// </summary>
+    /// <summary>A placed building's own indoors location Name (FarmMapEditor.Name, i.e. its real
+    /// GameLocation &lt;name&gt;) is a DISPLAY string ("Big Shed", "Deluxe Barn", ...), confirmed
+    /// against real save data - NOT the map/tile-art asset Stardew actually ships it under
+    /// (Data/Buildings.json's own IndoorMap field: "Shed"/"Shed2" for Shed/Big Shed,
+    /// "Barn"/"Barn2"/"Barn3" for Barn/Big Barn/Deluxe Barn, "Coop"/"Coop2"/"Coop3" for the Coop
+    /// family - no file named e.g. "Big Shed.tmx" or "Deluxe Barn.tmx" exists at all). Real,
+    /// confirmed user report: entering a Shed or Barn's interior rendered as a plain solid-color
+    /// background instead of the real interior art, because MapAssetLoader.LoadMap does a direct
+    /// "{name}.tmx" file lookup with no fuzzy matching, and this tool was passing the display name
+    /// straight through as if it were the asset name.</summary>
+    private static readonly Dictionary<string, string> IndoorMapAssetNames = new()
+    {
+        ["Shed"] = "Shed",
+        ["Big Shed"] = "Shed2",
+        ["Barn"] = "Barn",
+        ["Big Barn"] = "Barn2",
+        ["Deluxe Barn"] = "Barn3",
+        ["Coop"] = "Coop",
+        ["Big Coop"] = "Coop2",
+        ["Deluxe Coop"] = "Coop3",
+    };
+
     partial void OnSelectedLocationNameChanged(string value)
     {
         Selected = null;
@@ -1185,7 +1207,12 @@ public partial class MapTabViewModel : ViewModelBase
         {
             _map = resolvedMap;
             _mapLocationName = value;
-            TryLoadTmxMap(resolvedMap.Name ?? value);
+            var mapArtName = _save.FindBuildingForInteriorLocationName(value) is { } owningBuilding
+                && owningBuilding.BuildingType is { } buildingType
+                && IndoorMapAssetNames.TryGetValue(buildingType, out var realAssetName)
+                ? realAssetName
+                : resolvedMap.Name ?? value;
+            TryLoadTmxMap(mapArtName);
             _farmEntitiesCache = LoadEntitiesFrom(_map);
             foreach (var entity in _farmEntitiesCache)
                 Entities.Add(entity);
@@ -2024,6 +2051,8 @@ public partial class MapTabViewModel : ViewModelBase
             case PlacedObjectEditor obj: _map.Move(obj, newPosition); break;
             case BuildingEditor building: _map.Move(building, newPosition); break;
             case BushEditor bush: _map.Move(bush, newPosition); break;
+            case FurnitureEditor furniture: _map.Move(furniture, newPosition); break;
+            case FruitTreeEditor fruitTree: _map.Move(fruitTree, newPosition); break;
             default: return;
         }
 

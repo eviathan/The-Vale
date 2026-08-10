@@ -227,6 +227,7 @@ public sealed partial class ResourceClumpDetailsViewModel : MapEntityDetailsView
 public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewModel
 {
     private readonly Action<ChestEditor> _goToChestInStorage;
+    private bool _isBound;
 
     public PlacedObjectEditor Placed { get; }
     public ItemRowViewModel Item { get; }
@@ -234,6 +235,19 @@ public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewM
     /// <summary>#6c: only Chest-type placed Objects get a "Go to Storage" shortcut - other
     /// placed Objects (crafting machines, forageables, ...) have no Storage-tab counterpart.</summary>
     public bool IsChest => Placed.Item.ItemType == "Chest";
+
+    /// <summary>Gates the sprinkler-attachment panel - a Pressure Nozzle/Enricher/torch only mean
+    /// anything on a real Basic/Quality/Iridium Sprinkler (AreaOfEffect.IsSprinkler).</summary>
+    public bool IsSprinkler => MapAssets.AreaOfEffect.IsSprinkler(Placed.Item.BigCraftable, Placed.Item.ParentSheetIndex?.ToString() ?? "");
+
+    public IReadOnlyList<NamedValue> SprinklerAttachmentOptions => GameEnums.SprinklerAttachmentOptions;
+
+    [ObservableProperty] private NamedValue _sprinklerAttachment;
+
+    /// <summary>Real Object.SpecialVariable == 999999 sentinel - decompiled Object.cs sets this
+    /// when a Torch (id 93) is dropped onto a sprinkler; see ItemEditor.SpecialVariable remarks
+    /// for why this persists despite looking like a runtime-only flag.</summary>
+    [ObservableProperty] private bool _hasTorch;
 
     public PlacedObjectDetailsViewModel(MapEntitySummary summary, PlacedObjectEditor placed, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove, Action<ChestEditor> goToChestInStorage)
         : base(summary, onEdited, onRemove)
@@ -243,6 +257,34 @@ public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewM
         // The row's own onRemove is unused here - removal goes through this panel's inherited
         // Remove command instead, which removes the whole placed object, not just the item row.
         Item = new ItemRowViewModel(placed.Item, _ => { }, _ => NotifyEdited());
+
+        var attachedId = placed.Item.HeldObject?.ParentSheetIndex ?? 0;
+        _sprinklerAttachment = GameEnums.FindOrFirst(GameEnums.SprinklerAttachmentOptions, attachedId);
+        _hasTorch = placed.Item.SpecialVariable == 999999;
+        _isBound = true;
+    }
+
+    partial void OnSprinklerAttachmentChanged(NamedValue value)
+    {
+        if (!_isBound)
+            return;
+
+        switch (value.Value)
+        {
+            case 915: Placed.Item.SetHeldObject(SprinklerAttachments.CreatePressureNozzle()); break;
+            case 913: Placed.Item.SetHeldObject(SprinklerAttachments.CreateEnricher()); break;
+            default: Placed.Item.ClearHeldObject(); break;
+        }
+        NotifyEdited();
+    }
+
+    partial void OnHasTorchChanged(bool value)
+    {
+        if (!_isBound)
+            return;
+
+        Placed.Item.SpecialVariable = value ? 999999 : 0;
+        NotifyEdited();
     }
 
     [RelayCommand]

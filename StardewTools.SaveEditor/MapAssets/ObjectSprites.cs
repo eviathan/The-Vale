@@ -61,4 +61,21 @@ public static class ObjectSprites
         source = new Rect(cell.X, cell.Y, CellSize * widthInTiles, CellSize * heightInTiles);
         return true;
     }
+
+    /// <summary>The static (non-animated) flame cell of the real torch-on-object overlay
+    /// (decompiled Torch.drawBasicTorch: source rect (336,48,16,16) with Y+=8/Height/=2 applied,
+    /// i.e. the bottom half of that cell - the animated glow/flicker layers drawBasicTorch also
+    /// draws aren't reproduced here, same "no per-frame animation" scope every other sprite in
+    /// this tool already has). Same springobjects.png sheet as every other Object icon.</summary>
+    public static bool TryGetTorchOverlaySprite(string contentFolder, out Bitmap bitmap, out Rect source)
+    {
+        if (!TryGetSprite(contentFolder, 0, out bitmap, out _))
+        {
+            source = default;
+            return false;
+        }
+
+        source = new Rect(336, 56, 16, 8);
+        return true;
+    }
 }

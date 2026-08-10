@@ -11,11 +11,9 @@ namespace StardewTools.SaveEditor.MapAssets;
 /// detection is by real item id/name, matching decompiled GetBaseRadiusForSprinkler/IsScarecrow/
 /// GetRadiusForScarecrow exactly.
 ///
-/// Deliberately NOT modeled: the Pressure Nozzle's +1 sprinkler radius bonus (decompiled
-/// GetModifiedRadiusForSprinkler checks `heldObject.QualifiedItemId == "(O)915"`) - attaching a
-/// held object to a placed Object isn't modeled by this tool at all yet (ItemEditor has no
-/// HeldObject accessor), so every sprinkler preview here is its own BASE radius regardless of
-/// what's really attached in a loaded save. Flagged rather than guessed.
+/// The Pressure Nozzle's +1 sprinkler radius bonus (decompiled GetModifiedRadiusForSprinkler:
+/// `heldObject.Value.QualifiedItemId == "(O)915"` -&gt; radius++) IS modeled, via the
+/// hasPressureNozzle parameter - see ItemEditor.HeldObject/SprinklerAttachments (Core layer).
 /// </summary>
 public static class AreaOfEffect
 {
@@ -24,17 +22,25 @@ public static class AreaOfEffect
     /// decompiled GetSprinklerTiles does, but not for the 4-neighbor radius-0 case or for
     /// scarecrows (a scarecrow's own tile isn't "protected" in any meaningful sense - decompiled
     /// GetRadiusForScarecrow's Vector2.Distance check happens to still be 0 there too, but it's
-    /// never a plantable tile in practice). Null if this item has no known AOE.</summary>
-    public static IReadOnlyList<(int Dx, int Dy)>? TilesFor(bool isBigCraftable, string itemId, string name)
+    /// never a plantable tile in practice). Null if this item has no known AOE.
+    /// <paramref name="hasPressureNozzle"/>: whether a real Pressure Nozzle (id 915) is attached
+    /// via this sprinkler's own heldObject - adds +1 to the base radius, matching decompiled
+    /// GetModifiedRadiusForSprinkler exactly (ignored for non-sprinkler items).</summary>
+    public static IReadOnlyList<(int Dx, int Dy)>? TilesFor(bool isBigCraftable, string itemId, string name, bool hasPressureNozzle = false)
     {
         if (!isBigCraftable && SprinklerBaseRadius(itemId) is { } sprinklerRadius)
-            return SprinklerOffsets(sprinklerRadius);
+            return SprinklerOffsets(hasPressureNozzle ? sprinklerRadius + 1 : sprinklerRadius);
 
         if (isBigCraftable && ScarecrowRadius(name) is { } scarecrowRadius)
             return ScarecrowOffsets(scarecrowRadius);
 
         return null;
     }
+
+    /// <summary>Whether this is a real sprinkler (Basic/Quality/Iridium) - the gate for whether
+    /// attaching a Pressure Nozzle/Enricher or a torch means anything (see PlacedObjectDetailsViewModel's
+    /// sprinkler-attachment UI).</summary>
+    public static bool IsSprinkler(bool isBigCraftable, string itemId) => !isBigCraftable && SprinklerBaseRadius(itemId) is not null;
 
     /// <summary>Decompiled Object.GetBaseRadiusForSprinkler's own switch, by real unqualified
     /// Objects.json id: Basic Sprinkler(599)=0, Quality Sprinkler(621)=1, Iridium Sprinkler(645)=2.</summary>

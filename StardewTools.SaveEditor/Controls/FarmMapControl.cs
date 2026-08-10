@@ -969,6 +969,28 @@ public sealed class FarmMapControl : Control
         // (like a tree canopy) drawn in its own row still visually overlaps rows above it
         // (already drawn), while anything in a row below draws over it in turn - so two trees
         // stacked vertically occlude each other in the right order without a full scene graph.
+        //
+        // Flooring and HoeDirt are drawn FIRST within each row, ahead of every other entity kind,
+        // regardless of where they happen to sit in the Entities collection - this isn't an
+        // approximation, it matches the real game exactly:
+        // - Flooring: Game1.cs's drawFloorDecorations() runs as its own complete SpriteBatch
+        //   Begin/End pass (drawing only Flooring terrain features) that's fully flushed to the
+        //   screen BEFORE the separate batch containing Objects/HoeDirt/Trees/etc. even begins -
+        //   there's no shared depth buffer, so paint order is final order, and Flooring's own real
+        //   layerDepth values (Flooring.draw's main tile is a fixed 1E-09f) are irrelevant to the
+        //   comparison; only which pass it's in matters.
+        // - HoeDirt: DOES share the same sorted batch as Objects, but HoeDirt.DrawOptimized uses
+        //   fixed, deliberately-tiny layerDepth constants (1E-08f dirt / 1.2E-08f watered overlay /
+        //   1.9E-08f fertilizer) versus an Object's real depth of roughly (tileBottom)/10000f
+        //   (e.g. ~0.006+ even at row 0) - HoeDirt's constants are always smaller by several
+        //   orders of magnitude, so it always sorts behind any Object on the same tile too.
+        // Previously this tool drew both as just another same-row entity with no explicit
+        // priority, so whichever of a Flooring/HoeDirt tile or an Object placed on it (e.g. a
+        // sprinkler on a stone walkway) happened to be enumerated later in Entities won
+        // arbitrarily - reported as sprinklers placed on flooring going invisible in the editor
+        // despite rendering fine in the real game, which always draws these underneath.
+        bool IsAlwaysUnderlay(MapEntitySummary e) => e.Kind is MapEntityKind.Flooring or MapEntityKind.HoeDirt;
+
         for (var y = 0; y < map.Height; y++)
         {
             foreach (var layer in beforeEntityLayers)
@@ -976,6 +998,16 @@ public sealed class FarmMapControl : Control
 
             foreach (var entity in entitiesByRow[y])
             {
+                if (!IsAlwaysUnderlay(entity))
+                    continue;
+                var opacity = Selected is { } sel && !ReferenceEquals(entity, sel) && Occludes(entity, sel) ? 0.35 : 1.0;
+                DrawSingleEntity(context, entity, offsetX, offsetY, tileScale, opacity);
+            }
+
+            foreach (var entity in entitiesByRow[y])
+            {
+                if (IsAlwaysUnderlay(entity))
+                    continue;
                 var opacity = Selected is { } sel && !ReferenceEquals(entity, sel) && Occludes(entity, sel) ? 0.35 : 1.0;
                 DrawSingleEntity(context, entity, offsetX, offsetY, tileScale, opacity);
             }
@@ -1022,7 +1054,8 @@ public sealed class FarmMapControl : Control
     {
         var tiles = (entity.Kind, entity.Source) switch
         {
-            (MapEntityKind.Object, PlacedObjectEditor placed) => AreaOfEffect.TilesFor(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "", placed.Item.Name),
+            (MapEntityKind.Object, PlacedObjectEditor placed) => AreaOfEffect.TilesFor(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "", placed.Item.Name,
+                placed.Item.HeldObject?.ParentSheetIndex?.ToString() == SprinklerAttachments.PressureNozzleId),
             (MapEntityKind.Building, BuildingEditor building) => AreaOfEffect.TilesForBuilding(building.BuildingType),
             _ => null,
         };
@@ -1258,6 +1291,43 @@ public sealed class FarmMapControl : Control
             var oy = pixelOffsetY + entity.Position.Y * scale;
             var objRect = new Rect(ox, oy, scale, scale);
             context.DrawImage(objBitmap, objSource, objRect);
+
+            // A sprinkler's real Pressure Nozzle/Enricher attachment (heldObject) draws as a
+            // small overlay near-centered on the same tile (decompiled Object.draw(): offset
+            // (0,-20) source px specifically for Enricher/913, no offset for Pressure Nozzle/915)
+            // - see ItemEditor.HeldObject/SprinklerAttachments. Critically, the sprite drawn is
+            // NOT the item's own pickup-icon cell - it's `ParentSheetIndex + 1`
+            // (GameLocation.getSourceRectForObject(this.heldObject.Value.ParentSheetIndex + 1),
+            // Object.cs's draw()) - a distinct, specifically-drawn "attached to sprinkler" variant
+            // one cell over in springobjects.png, deliberately smaller/positioned to look like it
+            // plugs into one of the sprinkler's outlets. Drawing the raw pickup-icon cell instead
+            // (915/913 themselves) - what this used to do - drew the wrong, larger graphic dead
+            // center on the tile, looking "dumped in the middle" rather than attached to an
+            // outlet, even though the anchor math itself was already correct. A torch placed on
+            // top (SpecialVariable == 999999) draws its own flame overlay above the tile - see
+            // ObjectSprites.TryGetTorchOverlaySprite remarks for what's simplified away.
+            var pixelsPerSourcePixel = scale / 16.0;
+            if (placed.Item.HeldObject is { } held && held.ParentSheetIndex is int heldIndex
+                && ObjectSprites.TryGetSprite(ContentFolder, heldIndex + 1, out var heldBitmap, out var heldSource))
+            {
+                var heldOffsetY = heldIndex.ToString() == SprinklerAttachments.EnricherId ? -20 * pixelsPerSourcePixel : 0;
+                var heldRect = new Rect(ox, oy + heldOffsetY, scale, scale);
+                context.DrawImage(heldBitmap, heldSource, heldRect);
+                objRect = objRect.Union(heldRect);
+            }
+            if (placed.Item.SpecialVariable == 999999 && ObjectSprites.TryGetTorchOverlaySprite(ContentFolder, out var torchBitmap, out var torchSource))
+            {
+                // Decompiled Torch.drawBasicTorch draws at world (tile.X*64-2, tile.Y*64+something
+                // that cancels out to +32-32=0) - i.e. flush with the tile's own top-left, not
+                // above it, spanning the upper half of the tile's own cell (source height 8px = 32
+                // screen px at the real fixed 4x scale, exactly half a 64px tile).
+                var torchWidth = torchSource.Width * pixelsPerSourcePixel;
+                var torchHeight = torchSource.Height * pixelsPerSourcePixel;
+                var torchRect = new Rect(ox, oy, torchWidth, torchHeight);
+                context.DrawImage(torchBitmap, torchSource, torchRect);
+                objRect = objRect.Union(torchRect);
+            }
+
             Record(objRect);
             return;
         }
@@ -2259,19 +2329,39 @@ public sealed class FarmMapControl : Control
     }
 
     /// <summary>Entity under a screen point - shared by OnPointerPressed (deciding move-drag vs
-    /// marquee-drag) and ResolveSingleClick (plain-click selection). Checks each entity's real
-    /// drawn bounds first (_entityScreenBounds/_entityDrawOrder, populated by the last real-map
-    /// render) - many sprites (a tree canopy, a tall building) are drawn well outside their
-    /// logical tile footprint, so hit-testing only the footprint meant most of what's actually
-    /// visible wasn't clickable/draggable at all. Walked in reverse draw order, so an overlap
-    /// between two sprites resolves to whichever was drawn LAST - visually on top, matching the
-    /// row-interleaved Y-sort draw order, not an arbitrary or size-based pick. Falls back to the
-    /// old nearest-footprint-tile check (within one tile) for anything not in that cache yet -
-    /// abstract view, or a frame that hasn't rendered once since load.</summary>
+    /// marquee-drag) and ResolveSingleClick (plain-click selection). Two passes, both walked in
+    /// reverse draw order (an overlap resolves to whichever was drawn LAST - visually on top,
+    /// matching the row-interleaved Y-sort draw order):
+    /// 1. Prefer an entity whose own logical tile footprint actually contains the clicked tile.
+    ///    This has to come first: several sprites (a tree canopy, a tall building) are drawn well
+    ///    outside their logical footprint and get recorded into _entityScreenBounds covering
+    ///    neighboring tiles too - without this pass, clicking directly on, say, a fence or object
+    ///    whose tile happens to sit under a taller neighbor's overhanging sprite would silently
+    ///    select the neighbor instead (reported: selection landing "one tile below/above" the
+    ///    cursor depending on what tall sprite happened to be nearby).
+    /// 2. Only if no entity's own tile matches, fall back to the screen-bounds check (so clicking
+    ///    an otherwise-empty tile that a tree's canopy visually overhangs still selects the tree).
+    /// Both fall back further to the old nearest-footprint-tile check (within one tile) for
+    /// anything not in the cache yet - abstract view, or a frame that hasn't rendered once since
+    /// load.</summary>
     private MapEntitySummary? FindEntityAt(Point screenPosition, (double MinX, double MinY, double Scale) layout)
     {
         if (Entities is null)
             return null;
+
+        var clickedTileX = (int)Math.Floor(screenPosition.X / layout.Scale + layout.MinX);
+        var clickedTileY = (int)Math.Floor(screenPosition.Y / layout.Scale + layout.MinY);
+
+        bool OwnTileContainsClick(MapEntitySummary e) =>
+            clickedTileX >= e.Position.X && clickedTileX < e.Position.X + e.Width
+            && clickedTileY >= e.Position.Y && clickedTileY < e.Position.Y + e.Height;
+
+        for (var i = _entityDrawOrder.Count - 1; i >= 0; i--)
+        {
+            var candidate = _entityDrawOrder[i];
+            if (OwnTileContainsClick(candidate))
+                return candidate;
+        }
 
         for (var i = _entityDrawOrder.Count - 1; i >= 0; i--)
         {

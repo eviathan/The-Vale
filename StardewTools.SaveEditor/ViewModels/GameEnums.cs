@@ -204,6 +204,16 @@ public static class GameEnums
         new NamedValue(3, "Cellar"),
     };
 
+    /// <summary>A sprinkler's real heldObject attachment - decompiled Object.cs's own drop-in
+    /// check only ever accepts these two ids (see SprinklerAttachments in Core). 0 = none
+    /// attached (this list's own sentinel, not a real item id).</summary>
+    public static readonly IReadOnlyList<NamedValue> SprinklerAttachmentOptions = new[]
+    {
+        new NamedValue(0, "None"),
+        new NamedValue(915, "Pressure Nozzle (+1 radius)"),
+        new NamedValue(913, "Enricher (crop quality)"),
+    };
+
     public static string AchievementLabel(int id)
         => AchievementNames.TryGetValue(id, out var name) ? $"{id} - {name}" : $"{id} - Achievement #{id}";
 

@@ -836,6 +836,8 @@ public sealed class FarmMapEditor
     public void Move(PlacedObjectEditor placedObject, TilePosition newPosition) => placedObject.Move(newPosition);
     public void Move(BuildingEditor building, TilePosition newPosition) => building.Move(newPosition);
     public void Move(BushEditor bush, TilePosition newPosition) => bush.Move(newPosition);
+    public void Move(FurnitureEditor furniture, TilePosition newPosition) => furniture.Move(newPosition);
+    public void Move(FruitTreeEditor fruitTree, TilePosition newPosition) => fruitTree.Move(newPosition);
 
     /// <summary>
     /// Copy/paste and duplicate (see MapTabViewModel) - deep-clones the source's own wrapping

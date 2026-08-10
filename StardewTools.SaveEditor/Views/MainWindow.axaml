@@ -1024,6 +1024,15 @@
                                                         <StackPanel Classes="field" IsVisible="{Binding HasQuality}"><TextBlock Text="Quality"/><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="180"/></StackPanel>
                                                         <StackPanel Classes="field" IsVisible="{Binding HasColor}"><TextBlock Text="Dye color"/><ColorPicker Color="{Binding DyeColor}" HorizontalAlignment="Left"/></StackPanel>
                                                     </StackPanel>
+                                                    <StackPanel Spacing="6" IsVisible="{Binding IsSprinkler}">
+                                                        <TextBlock Text="Sprinkler attachment" FontWeight="Bold" Margin="0,6,0,0"/>
+                                                        <StackPanel Classes="field">
+                                                            <TextBlock Text="Nozzle"/>
+                                                            <ComboBox ItemsSource="{Binding SprinklerAttachmentOptions}" SelectedItem="{Binding SprinklerAttachment}" Width="220"/>
+                                                        </StackPanel>
+                                                        <CheckBox Content="Torch on top" IsChecked="{Binding HasTorch}"
+                                                                  ToolTip.Tip="The real game's own torch-on-sprinkler flag - purely decorative (a light source), doesn't affect watering."/>
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>
 
