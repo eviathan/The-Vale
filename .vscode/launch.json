@@ -3,5 +3,17 @@
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": []
+    "configurations": [
+        {
+            "name": "Debug StardewTools.SaveEditor",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-saveeditor",
+            "program": "${workspaceFolder}/StardewTools.SaveEditor/bin/Debug/net9.0/StardewTools.SaveEditor.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/StardewTools.SaveEditor",
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        }
+    ]
 }

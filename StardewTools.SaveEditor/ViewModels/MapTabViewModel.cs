@@ -110,11 +110,38 @@ public partial class MapTabViewModel : ViewModelBase
     [ObservableProperty] private string _contentFolder = "";
     [ObservableProperty] private string _extractStatus = "";
     [ObservableProperty] private bool _isExtracting;
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(PlaceObjectCommand))]
-    [NotifyCanExecuteChangedFor(nameof(PlaceBuildingCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ShiftLocationContentsCommand))]
     private string _selectedLocationName = "Farm";
+
+    /// <summary>Hand-written (not [ObservableProperty]) specifically to guard against a real,
+    /// confirmed bug: AvailableLocations only ever lists top-level location names, never a
+    /// building interior's synthetic "__indoors__{guid}" key (see SaveGameEditor.
+    /// BuildingInteriorLocationName) - so the TwoWay-bound "Location" ComboBox in MainWindow.axaml,
+    /// unable to find that key among its own Items whenever this is set to a building interior,
+    /// reports "no selection" straight back through the binding - i.e. sets this property to null
+    /// immediately after EnterBuildingInterior sets it to the real key. A generator-hooked
+    /// OnSelectedLocationNameChanging/Changed partial can OBSERVE that but can't PREVENT the
+    /// assignment (no cancel mechanism), so the only fix is a real guard clause here, before the
+    /// field ever gets overwritten. Previously this null NullReferenceException'd inside
+    /// GetLocationMap (or, without a debugger attached, got silently swallowed by Avalonia's own
+    /// binding error handling) and left SelectedLocationName permanently null while the internal
+    /// _mapLocationName field still held the real key - a mismatch that made EVERY subsequent
+    /// click silently no-op forever, since OnClickedTileChanged's own gate requires the two to
+    /// match. Real, confirmed user report, root-caused via a live debugger stack trace - this is
+    /// THE root cause behind interior object placement appearing completely broken.</summary>
+    public string SelectedLocationName
+    {
+        get => _selectedLocationName;
+        set
+        {
+            if (value is null || !SetProperty(ref _selectedLocationName, value))
+                return;
+
+            OnSelectedLocationNameChanged(value);
+            PlaceObjectCommand.NotifyCanExecuteChanged();
+            PlaceBuildingCommand.NotifyCanExecuteChanged();
+            ShiftLocationContentsCommand.NotifyCanExecuteChanged();
+        }
+    }
     [ObservableProperty] private int _houseUpgradeLevel;
 
     /// <summary>Which real .tmx file FarmMapControl should load for the FarmHouse location -
@@ -521,6 +548,7 @@ public partial class MapTabViewModel : ViewModelBase
                 : GameInstallLocator.FindExtractedContentFolder() ?? "";
 
         Entities.CollectionChanged += (_, _) => RecomputeEntityLegend();
+        Entities.CollectionChanged += (_, _) => RefreshSummaryEntityCount();
         RecentPlaceableItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRecentPlaceableItems));
 
         foreach (var recentRef in AppSettings.Load().RecentPlaceableItems)
@@ -559,6 +587,26 @@ public partial class MapTabViewModel : ViewModelBase
             .Select(i => new RecentPlaceableItemRef { ItemId = i.RealItemId, IsBigCraftable = i.IsBigCraftable })
             .ToList();
         settings.Save();
+    }
+
+    /// <summary>Keeps the "N placed entities in X" summary text live as Entities is mutated in
+    /// place (a placement, a delete, a paste, ...) within the SAME location session - previously
+    /// this text was only ever computed once, at location-entry time (OnSelectedLocationNameChanged/
+    /// Bind), and never refreshed afterward, so it stayed frozen (e.g. "0 placed entities...")
+    /// even after successful placements, real user report: this - combined with the stale
+    /// PendingPlacement confirmation bug (see OnSelectedLocationNameChanged) - made working
+    /// placements look completely broken, since neither piece of feedback ever changed no matter
+    /// what was actually happening underneath.</summary>
+    private void RefreshSummaryEntityCount()
+    {
+        if (_map is null)
+            return;
+
+        var unmodeled = _map.UnmodeledTerrainFeatures;
+        Summary = unmodeled.Count == 0
+            ? $"{Entities.Count} placed entities in {SelectedLocationName}."
+            : $"{Entities.Count} placed entities in {SelectedLocationName}. Also {unmodeled.Count} tile(s) of " +
+              $"unmodeled terrain feature type(s) not shown: {string.Join(", ", unmodeled.Select(u => u.Type).Distinct())}.";
     }
 
     /// <summary>Grouped counts by MapEntityKind for the sidebar legend panel - cheap enough to
@@ -1218,11 +1266,22 @@ public partial class MapTabViewModel : ViewModelBase
         ["Deluxe Coop"] = "Coop3",
     };
 
-    partial void OnSelectedLocationNameChanged(string value)
+    private void OnSelectedLocationNameChanged(string value)
     {
         Selected = null;
         Entities.Clear();
         Animals.Clear();
+
+        // A confirmation left unresolved (Confirm/Cancel never clicked) when the user navigates
+        // away otherwise sits there indefinitely showing a now-irrelevant/confusing prompt from a
+        // DIFFERENT location (e.g. "clear Grass first?" persisting after walking into a building,
+        // where Grass can't even exist) - real, confirmed user report: this made it look like
+        // every subsequent placement attempt was being silently ignored, since the panel never
+        // changed no matter what was clicked next, even though placement itself wasn't actually
+        // blocked by it underneath.
+        PendingPlacement = null;
+        PlacementBlockedMessage = null;
+        PlacementBlockedTiles = Array.Empty<TilePosition>();
 
         if (_save?.GetLocationMap(value) is { } resolvedMap)
         {

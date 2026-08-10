@@ -54,9 +54,16 @@ public sealed class AppSettings
     /// PaintStyleStore (ViewModels layer).</summary>
     public List<SavedPaintStyleRef> PaintStyles { get; set; } = new();
 
-    private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "StardewTools", "settings.json");
+    /// <summary>Overridable via STARDEWTOOLS_SETTINGS_PATH so the render-harness test tool (and
+    /// any other automated caller) can point this at a scratch file instead of silently
+    /// overwriting the real app's settings on every run - see feedback_render_harness_settings_
+    /// sideeffect memory: every harness test sets ContentFolder, which calls Save(), which used
+    /// to always hit the real ~/Library/Application Support/StardewTools/settings.json, clobbering
+    /// the user's real MapContentFolder/LastSaveFilePath. Unset (the real app's normal case) falls
+    /// through to the real path unchanged.</summary>
+    private static string FilePath => Environment.GetEnvironmentVariable("STARDEWTOOLS_SETTINGS_PATH") is { } overridePath
+        ? overridePath
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StardewTools", "settings.json");
 
     public static AppSettings Load()
     {

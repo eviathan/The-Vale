@@ -102,9 +102,9 @@ public sealed class SaveGameEditor
     /// real Data/Buildings.json IndoorMap art asset to load - see MapTabViewModel's
     /// IndoorMapAssetNames). Null if locationName isn't one of these synthetic keys, or the
     /// building it names no longer exists.</summary>
-    public BuildingEditor? FindBuildingForInteriorLocationName(string locationName)
+    public BuildingEditor? FindBuildingForInteriorLocationName(string? locationName)
     {
-        if (!locationName.StartsWith(BuildingInteriorPrefix, StringComparison.Ordinal))
+        if (locationName is null || !locationName.StartsWith(BuildingInteriorPrefix, StringComparison.Ordinal))
             return null;
 
         var buildingId = locationName[BuildingInteriorPrefix.Length..];
@@ -124,8 +124,11 @@ public sealed class SaveGameEditor
     /// long as that element has the same GameLocation-shaped children (confirmed true for
     /// BuildingIndoorsEditor's own output). Null when neither resolves.
     /// </summary>
-    public FarmMapEditor? GetLocationMap(string locationName)
+    public FarmMapEditor? GetLocationMap(string? locationName)
     {
+        if (locationName is null)
+            return null;
+
         if (FindLocationElement(locationName) is { } element)
             return new FarmMapEditor(element);
 
