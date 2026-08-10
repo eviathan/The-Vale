@@ -815,6 +815,42 @@
                                             </StackPanel>
                                         </StackPanel>
 
+                                        <StackPanel Spacing="6" IsVisible="{Binding HasSelectedSprinklers}">
+                                            <TextBlock Text="{Binding SelectedSprinklerCount, StringFormat='Sprinklers in selection ({0}) - group edit'}" FontWeight="Bold" Margin="0,6,0,0"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <ComboBox ItemsSource="{x:Static vm:GameEnums.SprinklerAttachmentOptions}" SelectedItem="{Binding BulkSprinklerAttachment}" Width="220"/>
+                                                <Button Content="Set attachment" Command="{Binding BulkApplySprinklerAttachmentCommand}"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <CheckBox Content="Torch on top" IsChecked="{Binding BulkHasTorch}"/>
+                                                <Button Content="Apply" Command="{Binding BulkApplyTorchCommand}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="6" IsVisible="{Binding HasSelectedHoldableObjects}">
+                                            <TextBlock Text="{Binding SelectedHoldableObjectCount, StringFormat='Machines/objects in selection ({0}) - group edit'}" FontWeight="Bold" Margin="0,6,0,0"/>
+                                            <TextBlock Text="Loads the same item into every selected machine's real heldObject slot at once - a Crystalarium's mineral, a Furnace/Keg/etc.'s output, ..."
+                                                       Opacity="0.6" TextWrapping="Wrap" FontSize="11"/>
+                                            <AutoCompleteBox ItemsSource="{Binding BulkHeldItemOptions}" SelectedItem="{Binding BulkHeldItem}"
+                                                              FilterMode="Contains" Watermark="Search items...">
+                                                <AutoCompleteBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                                   Width="20" Height="20" Stretch="Uniform"/>
+                                                            <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </AutoCompleteBox.ItemTemplate>
+                                            </AutoCompleteBox>
+                                            <Button Content="Set held item" Command="{Binding BulkApplyHeldItemCommand}"
+                                                    ToolTip.Tip="Leave the search box empty to clear the held item on every selected machine instead."/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <CheckBox Content="Ready to collect" IsChecked="{Binding BulkReadyToCollect}"/>
+                                                <Button Content="Apply" Command="{Binding BulkApplyReadyToCollectCommand}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
                                         <TextBlock Text="{Binding BulkActionStatus}" Opacity="0.7" FontSize="11" TextWrapping="Wrap"
                                                    IsVisible="{Binding BulkActionStatus, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}"/>
                                     </StackPanel>
@@ -1037,6 +1073,25 @@
                                                         </StackPanel>
                                                         <CheckBox Content="Torch on top" IsChecked="{Binding HasTorch}"
                                                                   ToolTip.Tip="The real game's own torch-on-sprinkler flag - purely decorative (a light source), doesn't affect watering."/>
+                                                    </StackPanel>
+                                                    <StackPanel Spacing="6" IsVisible="{Binding CanHoldItem}">
+                                                        <TextBlock Text="Held item (machine contents/output)" FontWeight="Bold" Margin="0,6,0,0"/>
+                                                        <TextBlock Text="Loads any item into this object's real heldObject slot - a Crystalarium's mineral, a Furnace/Keg/Preserves Jar/etc.'s output, ..."
+                                                                   Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+                                                        <AutoCompleteBox ItemsSource="{Binding HeldItemOptions}" SelectedItem="{Binding SelectedHeldItem}"
+                                                                          FilterMode="Contains" Watermark="Search items...">
+                                                            <AutoCompleteBox.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                        <Image Source="{Binding Converter={x:Static iconconv:PlaceableItemIconConverter.Instance}}"
+                                                                               Width="20" Height="20" Stretch="Uniform"/>
+                                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                                    </StackPanel>
+                                                                </DataTemplate>
+                                                            </AutoCompleteBox.ItemTemplate>
+                                                        </AutoCompleteBox>
+                                                        <CheckBox Content="Ready to collect" IsChecked="{Binding IsReadyToCollect}" IsEnabled="{Binding SelectedHeldItem, Converter={x:Static conv:ObjectConverters.IsNotNull}}"
+                                                                  ToolTip.Tip="Marks the held item as finished processing (readyForHarvest) and zeroes the countdown timer, instead of still-in-progress."/>
                                                     </StackPanel>
                                                 </StackPanel>
                                             </DataTemplate>

@@ -249,6 +249,25 @@ public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewM
     /// for why this persists despite looking like a runtime-only flag.</summary>
     [ObservableProperty] private bool _hasTorch;
 
+    /// <summary>Gates the general "held item" panel (load a mineral into a Crystalarium, an
+    /// output into a Furnace/Keg/Preserves Jar/Cheese Press/..., etc.) - real Object.heldObject is
+    /// a plain field on every Object/BigCraftable, not something individual machines opt into, so
+    /// this is offered for anything that ISN'T already covered by a more specific/constrained
+    /// panel: a sprinkler's own attachment dropdown (only 2 real valid items - offering this
+    /// generic one too would let a nonsensical item get "attached"), a Chest (heldObject isn't
+    /// what a Chest's real content list uses at all - see ChestEditor/Placed.AsChest), or a Fence
+    /// (physically can't hold anything).</summary>
+    public bool CanHoldItem => !IsSprinkler && !IsChest && Placed.Item.ItemType != "Fence";
+
+    public IReadOnlyList<PlaceableItem> HeldItemOptions => PlaceableItems.All;
+
+    [ObservableProperty] private PlaceableItem? _selectedHeldItem;
+
+    /// <summary>Real Object.readyForHarvest - whether this machine's held item is finished
+    /// processing and can be collected. Also zeroes minutesUntilReady (the countdown timer) so the
+    /// two fields stay consistent - a save edited to "ready" shouldn't also claim minutes remain.</summary>
+    [ObservableProperty] private bool _isReadyToCollect;
+
     public PlacedObjectDetailsViewModel(MapEntitySummary summary, PlacedObjectEditor placed, Action<MapEntityDetailsViewModel> onEdited, Action<MapEntitySummary> onRemove, Action<ChestEditor> goToChestInStorage)
         : base(summary, onEdited, onRemove)
     {
@@ -261,6 +280,11 @@ public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewM
         var attachedId = placed.Item.HeldObject?.ParentSheetIndex ?? 0;
         _sprinklerAttachment = GameEnums.FindOrFirst(GameEnums.SprinklerAttachmentOptions, attachedId);
         _hasTorch = placed.Item.SpecialVariable == 999999;
+
+        if (placed.Item.HeldObject is { } held && held.ParentSheetIndex is int heldIndex)
+            _selectedHeldItem = PlaceableItems.All.FirstOrDefault(i => i.Index == heldIndex && i.IsBigCraftable == held.BigCraftable);
+        _isReadyToCollect = placed.Item.ReadyForHarvest;
+
         _isBound = true;
     }
 
@@ -284,6 +308,29 @@ public sealed partial class PlacedObjectDetailsViewModel : MapEntityDetailsViewM
             return;
 
         Placed.Item.SpecialVariable = value ? 999999 : 0;
+        NotifyEdited();
+    }
+
+    partial void OnSelectedHeldItemChanged(PlaceableItem? value)
+    {
+        if (!_isBound)
+            return;
+
+        if (value is null)
+            Placed.Item.ClearHeldObject();
+        else
+            Placed.Item.SetHeldObject(HeldItemBuilder.Create(value.Name, value.Index, value.Price, value.Edibility, value.Category, value.Type, value.IsBigCraftable, value.ItemId));
+        NotifyEdited();
+    }
+
+    partial void OnIsReadyToCollectChanged(bool value)
+    {
+        if (!_isBound)
+            return;
+
+        Placed.Item.ReadyForHarvest = value;
+        if (value)
+            Placed.Item.MinutesUntilReady = 0;
         NotifyEdited();
     }
 

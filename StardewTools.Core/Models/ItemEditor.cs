@@ -155,5 +155,24 @@ public sealed class ItemEditor
 
     public void ClearHeldObject() => _element.Element("heldObject")?.Remove();
 
+    /// <summary>Real Object.minutesUntilReady - counts down while a machine processes its held
+    /// item; 0 means either "nothing being processed" or "done, ready to collect" (readyForHarvest
+    /// is the actual "ready" signal, this is just the timer).</summary>
+    public int MinutesUntilReady
+    {
+        get => _element.TryGetChildInt("minutesUntilReady") ?? 0;
+        set => _element.SetChildIntCreateIfMissing("minutesUntilReady", value);
+    }
+
+    /// <summary>Real Object.readyForHarvest - true when this Object's heldObject is finished
+    /// processing and can be collected (decompiled Object.cs's own machine-output check gate).
+    /// Also doubles as "this forageable/crop-adjacent Object can be picked" for the handful of
+    /// non-machine Objects that use it that way, but every caller here is machine-context.</summary>
+    public bool ReadyForHarvest
+    {
+        get => _element.TryGetChildBool("readyForHarvest") ?? false;
+        set => _element.SetChildBoolCreateIfMissing("readyForHarvest", value);
+    }
+
     internal XElement Element => _element;
 }

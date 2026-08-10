@@ -441,6 +441,15 @@ public sealed class FarmMapControl : Control
     private string? _loadedFarmHouseMapFileName;
     private (double MinX, double MinY, double Scale)? _lastLayout;
 
+    /// <summary>Remembers each location's own Zoom/pan so leaving a building's interior and coming
+    /// back to its exterior (or revisiting a same-tier building's interior - MapArtLocationName is
+    /// shared across every instance of a given tier, e.g. "Shed2" for every Big Shed, so this can't
+    /// tell two different Big Sheds apart, only tiers) restores exactly where you left off instead
+    /// of re-centering at default zoom every time. Real, requested feature - previously every
+    /// location switch unconditionally reset the view via _needsViewCentering. Keyed by LocationName
+    /// (== MapArtLocationName), which is stable/unique for "Farm" - the case this was asked for.</summary>
+    private readonly Dictionary<string, (double Zoom, double PanX, double PanY)> _savedViewByLocation = new();
+
     /// <summary>Each entity's actual on-screen bounds from the last real-map render - populated
     /// fresh every RenderRealMap pass (cleared up front, refilled as each entity is drawn).
     /// Used for pixel-accurate hit-testing instead of a plain tile-footprint check, since many
@@ -554,13 +563,33 @@ public sealed class FarmMapControl : Control
 
     private void TryLoadMap()
     {
+        // Remember the view we're leaving (keyed by the OLD LocationName, still in _loadedLocation
+        // at this point) before switching, and restore a previously-saved view for the location
+        // we're arriving at if one exists - see _savedViewByLocation's remarks. Guarded on
+        // Bounds.Width being real (not the default 0x0 layout hasn't run yet) so a location switch
+        // that happens before this control's first layout pass doesn't save a meaningless 0-sized
+        // view over a real one.
+        if (_loadedLocation is { } previousLocation && Bounds.Width > 0)
+            _savedViewByLocation[previousLocation] = (Zoom, PanOffsetTileX, PanOffsetTileY);
+
         _loadedFolder = ContentFolder;
         _loadedLocation = LocationName;
         _loadedMapFileName = FarmMapFileName;
         _loadedFarmHouseMapFileName = FarmHouseMapFileName;
         _map = null;
         _loader = null;
-        _needsViewCentering = true; // a genuinely different map just loaded - re-center pan/zoom on it once, then leave the user's view alone
+
+        if (_savedViewByLocation.TryGetValue(LocationName, out var savedView))
+        {
+            _needsViewCentering = false;
+            Zoom = savedView.Zoom;
+            PanOffsetTileX = savedView.PanX;
+            PanOffsetTileY = savedView.PanY;
+        }
+        else
+        {
+            _needsViewCentering = true; // never visited before - center pan/zoom on it once, then leave the user's view alone
+        }
 
         if (string.IsNullOrWhiteSpace(ContentFolder))
         {

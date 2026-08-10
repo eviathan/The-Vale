@@ -99,11 +99,19 @@ public partial class MapTabViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(BulkApplyTreeGrowthStageCommand))]
     [NotifyCanExecuteChangedFor(nameof(BulkApplyTreeStumpCommand))]
     [NotifyCanExecuteChangedFor(nameof(BulkApplyFruitTreeGrowthStageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplySprinklerAttachmentCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyTorchCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyHeldItemCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BulkApplyReadyToCollectCommand))]
     [NotifyPropertyChangedFor(nameof(HasSelectedRange))]
     [NotifyPropertyChangedFor(nameof(HasSelectedTrees))]
     [NotifyPropertyChangedFor(nameof(HasSelectedFruitTrees))]
     [NotifyPropertyChangedFor(nameof(SelectedTreeCount))]
     [NotifyPropertyChangedFor(nameof(SelectedFruitTreeCount))]
+    [NotifyPropertyChangedFor(nameof(HasSelectedSprinklers))]
+    [NotifyPropertyChangedFor(nameof(SelectedSprinklerCount))]
+    [NotifyPropertyChangedFor(nameof(HasSelectedHoldableObjects))]
+    [NotifyPropertyChangedFor(nameof(SelectedHoldableObjectCount))]
     private IReadOnlyList<MapEntitySummary> _selectedRange = Array.Empty<MapEntitySummary>();
     [ObservableProperty] private string _season = "";
     [ObservableProperty] private string _summary = "";
@@ -1057,6 +1065,113 @@ public partial class MapTabViewModel : ViewModelBase
             affected++;
         }
         BulkActionStatus = $"Set growth stage to {BulkFruitTreeGrowthStage.Name} on {affected} fruit tree(s).";
+    }
+
+    /// <summary>Same "#11" group-edit shape as the Tree/FruitTree sections above, extended to
+    /// PlacedObjectDetailsViewModel's two per-entity panels (sprinkler attachment, general held
+    /// item) - real, confirmed user report: range-selecting several sprinklers/machines showed no
+    /// way to set them all at once, only the single-entity details panel had these controls.</summary>
+    private static bool IsSprinklerEntity(MapEntitySummary e) =>
+        e.Kind == MapEntityKind.Object && e.Source is PlacedObjectEditor placed
+        && AreaOfEffect.IsSprinkler(placed.Item.BigCraftable, placed.Item.ParentSheetIndex?.ToString() ?? "");
+
+    public bool HasSelectedSprinklers => SelectedRange.Any(IsSprinklerEntity);
+    public int SelectedSprinklerCount => SelectedRange.Count(IsSprinklerEntity);
+
+    [ObservableProperty] private NamedValue _bulkSprinklerAttachment = GameEnums.SprinklerAttachmentOptions[0];
+
+    [RelayCommand(CanExecute = nameof(HasSelectedSprinklers))]
+    private void BulkApplySprinklerAttachment()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (!IsSprinklerEntity(entity) || entity.Source is not PlacedObjectEditor placed)
+                continue;
+
+            switch (BulkSprinklerAttachment.Value)
+            {
+                case 915: placed.Item.SetHeldObject(SprinklerAttachments.CreatePressureNozzle()); break;
+                case 913: placed.Item.SetHeldObject(SprinklerAttachments.CreateEnricher()); break;
+                default: placed.Item.ClearHeldObject(); break;
+            }
+            ReplaceEntitySummary(entity, MapEntitySummary.FromObject(placed));
+            affected++;
+        }
+        BulkActionStatus = $"Set sprinkler attachment to {BulkSprinklerAttachment.Name} on {affected} sprinkler(s).";
+    }
+
+    [ObservableProperty] private bool _bulkHasTorch;
+
+    [RelayCommand(CanExecute = nameof(HasSelectedSprinklers))]
+    private void BulkApplyTorch()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (!IsSprinklerEntity(entity) || entity.Source is not PlacedObjectEditor placed)
+                continue;
+
+            placed.Item.SpecialVariable = BulkHasTorch ? 999999 : 0;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromObject(placed));
+            affected++;
+        }
+        BulkActionStatus = $"{(BulkHasTorch ? "Added" : "Removed")} torch on {affected} sprinkler(s).";
+    }
+
+    /// <summary>Same gate as PlacedObjectDetailsViewModel.CanHoldItem - anything holdable that
+    /// ISN'T already covered by the sprinkler-specific panel above, a Chest (its own real content
+    /// list, not heldObject), or a Fence (can't physically hold anything).</summary>
+    private static bool CanHoldItemEntity(MapEntitySummary e) =>
+        e.Kind == MapEntityKind.Object && e.Source is PlacedObjectEditor placed
+        && !IsSprinklerEntity(e) && placed.Item.ItemType != "Chest" && placed.Item.ItemType != "Fence";
+
+    public bool HasSelectedHoldableObjects => SelectedRange.Any(CanHoldItemEntity);
+    public int SelectedHoldableObjectCount => SelectedRange.Count(CanHoldItemEntity);
+
+    public IReadOnlyList<PlaceableItem> BulkHeldItemOptions => PlaceableItems.All;
+
+    [ObservableProperty] private PlaceableItem? _bulkHeldItem;
+
+    [RelayCommand(CanExecute = nameof(HasSelectedHoldableObjects))]
+    private void BulkApplyHeldItem()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (!CanHoldItemEntity(entity) || entity.Source is not PlacedObjectEditor placed)
+                continue;
+
+            if (BulkHeldItem is { } item)
+                placed.Item.SetHeldObject(HeldItemBuilder.Create(item.Name, item.Index, item.Price, item.Edibility, item.Category, item.Type, item.IsBigCraftable, item.ItemId));
+            else
+                placed.Item.ClearHeldObject();
+            ReplaceEntitySummary(entity, MapEntitySummary.FromObject(placed));
+            affected++;
+        }
+        BulkActionStatus = BulkHeldItem is { } heldItem
+            ? $"Loaded {heldItem.Name} into {affected} object(s)."
+            : $"Cleared held item on {affected} object(s).";
+    }
+
+    [ObservableProperty] private bool _bulkReadyToCollect;
+
+    [RelayCommand(CanExecute = nameof(HasSelectedHoldableObjects))]
+    private void BulkApplyReadyToCollect()
+    {
+        var affected = 0;
+        foreach (var entity in SelectedRange.ToList())
+        {
+            if (!CanHoldItemEntity(entity) || entity.Source is not PlacedObjectEditor placed)
+                continue;
+
+            placed.Item.ReadyForHarvest = BulkReadyToCollect;
+            if (BulkReadyToCollect)
+                placed.Item.MinutesUntilReady = 0;
+            ReplaceEntitySummary(entity, MapEntitySummary.FromObject(placed));
+            affected++;
+        }
+        BulkActionStatus = $"Set ready-to-collect to {BulkReadyToCollect} on {affected} object(s).";
     }
 
     /// <summary>Clipboard for Copy/Paste/Duplicate - each entry's Source is the ORIGINAL live
