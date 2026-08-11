@@ -178,6 +178,7 @@ public sealed class FarmMapEditor
         }
         livesHere.Add(new XElement("long", myId));
 
+        SyncAnimalsMirror();
         return new FarmAnimalEditor(animalElement);
     }
 
@@ -196,6 +197,32 @@ public sealed class FarmMapEditor
         _farmLocation.Element("animalsThatLiveHere")?.Elements("long")
             .FirstOrDefault(e => (long?)e == myId)
             ?.Remove();
+
+        SyncAnimalsMirror();
+    }
+
+    /// <summary>GameLocation has both a real &lt;animals&gt; NetLongDictionary field AND a
+    /// read-only "Animals" property that just returns the same field - confirmed real: the
+    /// game's own XmlSerializer output independently (re-)serializes BOTH as separate top-level
+    /// elements (`&lt;animals&gt;` from the field, `&lt;Animals&gt;` - capitalized, wrapped in an
+    /// extra `&lt;SerializableDictionaryOfInt64FarmAnimal&gt;` layer - from the property), even
+    /// though they're the same data. On load, both get deserialized into the SAME dictionary
+    /// instance in declaration order (field before property), so the second one to run always
+    /// wins. A real save keeps them in sync because the game always regenerates both together;
+    /// this tool only ever touched the lowercase one, so any animal added here got silently wiped
+    /// the moment the save was loaded for real - confirmed by a live in-game diagnostic showing
+    /// animals.Length=0 despite animalsThatLiveHere still listing the id, and an empty
+    /// `&lt;SerializableDictionaryOfInt64FarmAnimal /&gt;` sitting in the stale `&lt;Animals&gt;`
+    /// copy. Rebuilt from scratch (not incrementally patched) after every Add/Remove so it can
+    /// never drift from `&lt;animals&gt;`'s own current content.</summary>
+    private void SyncAnimalsMirror()
+    {
+        _farmLocation.Element("Animals")?.Remove();
+
+        var items = _farmLocation.Element("animals")?.Elements("item") ?? Enumerable.Empty<XElement>();
+        var mirroredItems = items.Select(item => new XElement(item));
+        _farmLocation.Add(new XElement("Animals",
+            new XElement("SerializableDictionaryOfInt64FarmAnimal", mirroredItems)));
     }
 
     /// <summary>

@@ -705,7 +705,7 @@
                                            Text="{Binding #FarmMap.Status}"/>
                                 <TextBlock DockPanel.Dock="Bottom" Opacity="0.5" FontSize="11" TextWrapping="Wrap"
                                            Text="Scroll to pan, Ctrl/Cmd+scroll to zoom, hold Space and drag to pan. Drag an entity to move it; drag empty ground to range-select. [ / ] resizes the draw brush. Ctrl+C/V/D copy, paste (at the last clicked tile), and duplicate the current selection. 1-6 switch tools, Delete removes the selection, arrow keys nudge it by one tile."/>
-                                <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Selected="{Binding Selected}"
+                                <controls:FarmMapControl x:Name="FarmMap" Entities="{Binding Entities}" Animals="{Binding Animals}" Selected="{Binding Selected}"
                                                           Season="{Binding Season}" ContentFolder="{Binding ContentFolder}"
                                                           LocationName="{Binding MapArtLocationName}"
                                                           FarmMapFileName="{Binding FarmMapFileName}"

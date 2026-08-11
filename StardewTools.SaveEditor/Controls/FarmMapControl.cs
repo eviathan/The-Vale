@@ -29,6 +29,16 @@ public sealed class FarmMapControl : Control
     public static readonly StyledProperty<IEnumerable<MapEntitySummary>?> EntitiesProperty =
         AvaloniaProperty.Register<FarmMapControl, IEnumerable<MapEntitySummary>?>(nameof(Entities));
 
+    /// <summary>Farm animals living in the currently-viewed Barn/Coop interior - a separate
+    /// property from Entities since FarmAnimalEditor isn't a MapEntitySummary (animals aren't
+    /// selectable/movable/placeable the way every other entity kind here is - see
+    /// AnimalSprites remarks for why they're drawn at a deterministic pseudo-random position
+    /// instead of a real saved one). Real, confirmed user report: animals adopted via this tool
+    /// were correctly saved but never rendered anywhere on the map, only listed by name in the
+    /// sidebar - easy to read as "they aren't really in the barn."</summary>
+    public static readonly StyledProperty<IEnumerable<FarmAnimalEditor>?> AnimalsProperty =
+        AvaloniaProperty.Register<FarmMapControl, IEnumerable<FarmAnimalEditor>?>(nameof(Animals));
+
     public static readonly StyledProperty<MapEntitySummary?> SelectedProperty =
         AvaloniaProperty.Register<FarmMapControl, MapEntitySummary?>(nameof(Selected), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
 
@@ -198,6 +208,12 @@ public sealed class FarmMapControl : Control
     {
         get => GetValue(EntitiesProperty);
         set => SetValue(EntitiesProperty, value);
+    }
+
+    public IEnumerable<FarmAnimalEditor>? Animals
+    {
+        get => GetValue(AnimalsProperty);
+        set => SetValue(AnimalsProperty, value);
     }
 
     public MapEntitySummary? Selected
@@ -409,7 +425,7 @@ public sealed class FarmMapControl : Control
 
     static FarmMapControl()
     {
-        AffectsRender<FarmMapControl>(EntitiesProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
+        AffectsRender<FarmMapControl>(EntitiesProperty, AnimalsProperty, SelectedProperty, SeasonProperty, ContentFolderProperty, LocationNameProperty, HouseUpgradeLevelProperty,
             ZoomProperty, PanOffsetTileXProperty, PanOffsetTileYProperty, IsPlacementToolActiveProperty, HoverFootprintWidthProperty, HoverFootprintHeightProperty,
             HoverAoeTilesProperty, CurrentDaysPlayedProperty, BlockedEntitiesProperty, BlockedTilesProperty, FarmMapFileNameProperty, FarmHouseMapFileNameProperty, GreenhouseUnlockedProperty);
         FocusableProperty.OverrideDefaultValue<FarmMapControl>(true); // needed to receive the KeyDown/KeyUp events spacebar-pan depends on
@@ -1063,6 +1079,30 @@ public sealed class FarmMapControl : Control
 
         foreach (var layer in afterEntityLayers)
             DrawLayerFull(layer);
+
+        // Farm animals - not part of Entities (they're not selectable/movable/placeable, see
+        // AnimalsProperty remarks), drawn at a deterministic pseudo-random position each since a
+        // real saved position doesn't exist to draw from.
+        if (Animals is not null && !string.IsNullOrEmpty(ContentFolder))
+        {
+            foreach (var animal in Animals)
+            {
+                if (!AnimalSprites.TryGetSprite(ContentFolder, animal.Type, out var animalBitmap, out var animalSource))
+                    continue;
+
+                var (posX, posY) = AnimalSprites.PseudoRandomPosition(animal.MyId, map.Width, map.Height);
+                var animalScale = tileScale / 16.0;
+                var animalWidth = animalSource.Width * animalScale;
+                var animalHeight = animalSource.Height * animalScale;
+                // Bottom-anchored on its own tile, same as every other sprite here taller than one
+                // tile - an animal's real sprite height varies by type (16px chickens, 32px cows).
+                var animalDest = new Rect(
+                    offsetX + posX * tileScale + (tileScale - animalWidth) / 2,
+                    offsetY + (posY + 1) * tileScale - animalHeight,
+                    animalWidth, animalHeight);
+                context.DrawImage(animalBitmap, animalSource, animalDest);
+            }
+        }
 
         // Guarantee the selection stays visible even if something drawn after it (a taller
         // sprite in a later row, or a Front-layer tile) would otherwise cover it - the actual
